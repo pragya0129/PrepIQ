@@ -59,6 +59,34 @@ class PrepIQApiTestCase(unittest.TestCase):
         self.assertIsInstance(payload["skills"], list)
         self.assertEqual(payload["count"], len(payload["skills"]))
         self.assertIn("Python", payload["skills"])
+    
+    def test_extract_skills_endpoint_returns_multiword_skills(self) -> None:
+        from backend.app import ml
+
+        ml._spacy_nlp = False
+
+        response = self.client.post(
+            "/api/ml/extract-skills",
+            json={
+                "text": """
+                Worked on machine-learning, spring_boot,
+                oauth/jwt auth, and google-cloud deployment
+                """
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+
+        payload = response.json()
+        skills = payload["skills"]
+
+        self.assertIn("Machine Learning", skills)
+        self.assertIn("Spring Boot", skills)
+        self.assertIn("Google Cloud", skills)
+
+        # Single-word skills should still work
+        self.assertIn("Oauth", skills)
+        self.assertIn("JWT", skills)
 
     def test_match_score_endpoint_returns_score_and_label(self) -> None:
         response = self.client.post(
