@@ -115,6 +115,53 @@ class PrepIQApiTestCase(unittest.TestCase):
         tampered_me = self.client.get("/api/auth/me", headers={"Authorization": f"Bearer {tampered_token}"})
         self.assertEqual(tampered_me.status_code, 401, tampered_me.text)
 
+    def test_login_wrong_password_returns_401(self) -> None:
+        email = f"wrongpw-{uuid4().hex[:8]}@example.com"
+        self.client.post(
+            "/api/auth/signup",
+            json={"name": "Wrong PW User", "email": email, "password": "password123"},
+        )
+
+        response = self.client.post(
+            "/api/auth/login",
+            json={"email": email, "password": "wrongpassword"},
+        )
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertIn("Invalid credentials", response.json()["detail"])
+
+    def test_expired_token_returns_401(self) -> None:
+        from datetime import timedelta
+        from backend.app.main import encode_token, utc_now
+
+        user_id, _ = self.create_account()
+
+        expired_token = encode_token({
+            "sub": user_id,
+            "email": "expired@example.com",
+            "exp": int((utc_now() - timedelta(hours=1)).timestamp()),
+        })
+
+        response = self.client.get(
+            f"/api/users/{user_id}/sessions",
+            headers={"Authorization": f"Bearer {expired_token}"},
+        )
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertIn("Token expired", response.json()["detail"])
+
+    def test_cross_user_access_returns_403(self) -> None:
+        user_a_id, _ = self.create_account()
+        user_b_id, headers_b = self.create_account()
+
+        response = self.client.get(
+            f"/api/users/{user_a_id}/profile",
+            headers=headers_b,
+        )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertIn("Forbidden", response.json()["detail"])
+
     def test_profile_session_mock_and_job_flow(self) -> None:
         user_id, headers = self.create_account()
 
