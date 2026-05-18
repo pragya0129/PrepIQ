@@ -252,6 +252,15 @@ class PrepIQApiTestCase(unittest.TestCase):
         self.assertEqual(mock.status_code, 201, mock.text)
         self.assertIn("oneLineVerdict", mock.json()["aiFeedback"])
 
+        mocks = self.client.get(f"/api/users/{user_id}/mocks", headers=headers)
+        self.assertEqual(mocks.status_code, 200, mocks.text)
+        mocks_payload = mocks.json()
+        self.assertEqual(mocks_payload["total"], 1)
+        self.assertEqual(mocks_payload["limit"], 20)
+        self.assertEqual(mocks_payload["offset"], 0)
+        self.assertEqual(len(mocks_payload["items"]), 1)
+        self.assertEqual(mocks_payload["items"][0]["sessionId"], session_payload["id"])
+
         job = self.client.post(
             f"/api/users/{user_id}/jobs",
             headers=headers,
@@ -289,6 +298,11 @@ class PrepIQApiTestCase(unittest.TestCase):
         sessions = self.client.get(f"/api/users/{user_id}/sessions", headers=headers)
         self.assertEqual(sessions.status_code, 200, sessions.text)
         self.assertEqual(sessions.json(), [])
+
+        mocks_after_delete = self.client.get(f"/api/users/{user_id}/mocks", headers=headers)
+        self.assertEqual(mocks_after_delete.status_code, 200, mocks_after_delete.text)
+        self.assertEqual(mocks_after_delete.json()["items"], [])
+        self.assertEqual(mocks_after_delete.json()["total"], 0)
 
 
 if __name__ == "__main__":

@@ -25,7 +25,7 @@ services:
       ACCESS_TOKEN_TTL_HOURS: 168
       CORS_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-4o-mini}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-nvidia/nemotron-3-super-120b-a12b:free}
       OPENROUTER_APP_URL: ${OPENROUTER_APP_URL:-https://github.com/Aashikhandelwal05/prepiq}
       OPENROUTER_APP_NAME: ${OPENROUTER_APP_NAME:-PrepIQ}
       OPENROUTER_TIMEOUT_SECONDS: ${OPENROUTER_TIMEOUT_SECONDS:-30}

@@ -173,7 +173,7 @@ docker compose up --build
 | `CORS_ORIGINS` | Comma-separated list of frontend URLs allowed to access the backend API. | ✅ |
 | `ACCESS_TOKEN_TTL_HOURS` | Token expiry time in hours. Default value is `168`. | ❌ |
 | `OPENROUTER_API_KEY` | OpenRouter API key. Leave blank to use the built-in mock fallback. | ❌ |
-| `OPENROUTER_MODEL` | OpenRouter model name. Default value is `openrouter/free`. | ❌ |
+| `OPENROUTER_MODEL` | OpenRouter model name. Default value is `nvidia/nemotron-3-super-120b-a12b:free`. | ❌ |
 | `OPENROUTER_APP_URL` | App URL sent to OpenRouter. | ❌ |
 | `OPENROUTER_APP_NAME` | App name shown in OpenRouter. | ❌ |
 | `OPENROUTER_TIMEOUT_SECONDS` | OpenRouter request timeout in seconds. Default value is `30`. | ❌ |

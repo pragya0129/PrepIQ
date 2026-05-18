@@ -17,7 +17,7 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, create_engine, func, select
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, create_engine, delete, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from .ml import analyze_confidence, compute_match_score, extract_skills
@@ -835,6 +835,12 @@ def delete_session(
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
+    db.execute(
+        delete(MockAttemptTable).where(
+            MockAttemptTable.session_id == session_id,
+            MockAttemptTable.user_id == user_id,
+        )
+    )
     db.delete(session)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

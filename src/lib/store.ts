@@ -105,6 +105,13 @@ export interface MockAttempt {
   createdAt: string;
 }
 
+export interface PaginatedMockAttempts {
+  items: MockAttempt[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface JobApplication {
   id: string;
   userId: string;
@@ -164,7 +171,7 @@ function setSession(session: AuthSession | null) {
   localStorage.setItem(SESSION_KEY, JSON.stringify(session));
 }
 
-function useProtectedResource<T>(path: string | null, fallback: T) {
+function useProtectedResource<T, R = T>(path: string | null, fallback: T, transform?: (payload: R) => T) {
   const fallbackRef = useRef(fallback);
   const [data, setData] = useState<T>(fallback);
   const [error, setError] = useState<string | null>(null);
@@ -181,10 +188,10 @@ function useProtectedResource<T>(path: string | null, fallback: T) {
     let active = true;
     setLoading(true);
     setError(null);
-    apiRequest<T>(path)
+    apiRequest<R>(path)
       .then((result) => {
         if (!active) return;
-        setData(result);
+        setData(transform ? transform(result) : (result as unknown as T));
         setError(null);
       })
       .catch((requestError) => {
@@ -200,9 +207,13 @@ function useProtectedResource<T>(path: string | null, fallback: T) {
     return () => {
       active = false;
     };
-  }, [path]);
+  }, [path, transform]);
 
   return [data, setData, error, loading] as const;
+}
+
+export function getMockAttemptItems(payload: MockAttempt[] | PaginatedMockAttempts): MockAttempt[] {
+  return Array.isArray(payload) ? payload : payload.items;
 }
 
 export function useAuth() {
@@ -306,7 +317,11 @@ export function useInterviewSessions(userId: string | undefined) {
 }
 
 export function useMockAttempts(userId: string | undefined) {
-  const [attempts, setAttempts, attemptsError, attemptsLoading] = useProtectedResource<MockAttempt[]>(userId ? `/api/users/${userId}/mocks` : null, []);
+  const [attempts, setAttempts, attemptsError, attemptsLoading] = useProtectedResource<MockAttempt[]>(
+    userId ? `/api/users/${userId}/mocks` : null,
+    [],
+    getMockAttemptItems,
+  );
 
   const addAttempt = useCallback(async (input: CreateMockAttemptInput) => {
     if (!userId) throw new Error("User is not authenticated");

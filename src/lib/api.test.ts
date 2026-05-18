@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { apiRequest } from "@/lib/api";
+import { getMockAttemptItems, type MockAttempt, type PaginatedMockAttempts } from "@/lib/store";
 
 describe("apiRequest", () => {
   beforeEach(() => {
@@ -51,5 +52,44 @@ describe("apiRequest", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(apiRequest("/api/auth/login", { method: "POST" })).rejects.toThrow("Invalid credentials");
+  });
+});
+
+describe("getMockAttemptItems", () => {
+  const attempt: MockAttempt = {
+    id: "attempt-1",
+    sessionId: "session-1",
+    userId: "user-1",
+    question: "Tell me about a project.",
+    userAnswer: "I built a dashboard.",
+    aiScore: 7,
+    aiFeedback: {
+      strengths: ["Clear"],
+      missing: ["Metrics"],
+      modelAnswer: "Use STAR.",
+      oneLineVerdict: "Good start",
+      confidenceAnalysis: {
+        confidenceScore: 60,
+        sentiment: "neutral",
+        specificity: 10,
+        wordCount: 4,
+      },
+    },
+    createdAt: "2026-05-18T00:00:00Z",
+  };
+
+  it("supports the paginated backend response shape", () => {
+    const payload: PaginatedMockAttempts = {
+      items: [attempt],
+      total: 1,
+      limit: 20,
+      offset: 0,
+    };
+
+    expect(getMockAttemptItems(payload)).toEqual([attempt]);
+  });
+
+  it("keeps backward compatibility with array responses", () => {
+    expect(getMockAttemptItems([attempt])).toEqual([attempt]);
   });
 });
