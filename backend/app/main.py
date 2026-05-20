@@ -8,11 +8,12 @@ import logging
 import os
 import re
 import secrets
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
-from urllib.error import HTTPError, URLError
-from urllib.request import Request as UrllibRequest, urlopen
 from uuid import uuid4
+
+import httpx
 
 from fastapi import (
     Depends,
@@ -496,7 +497,9 @@ def stable_number(seed: str, minimum: int, maximum: int) -> int:
     return minimum + (int(digest[:8], 16) % span)
 
 
-def call_openrouter_json(system_prompt: str, user_prompt: str) -> dict[str, Any]:
+async def call_openrouter_json(
+    system_prompt: str, user_prompt: str, client: httpx.AsyncClient | None = None
+) -> dict[str, Any]:
     if not OPENROUTER_API_KEY:
         raise OpenRouterError("OpenRouter is not configured")
 
@@ -508,26 +511,73 @@ def call_openrouter_json(system_prompt: str, user_prompt: str) -> dict[str, Any]
             {"role": "user", "content": user_prompt},
         ],
     }
-    request = UrllibRequest(
-        "https://openrouter.ai/api/v1/chat/completions",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": OPENROUTER_APP_URL,
-            "X-Title": OPENROUTER_APP_NAME,
-        },
-        method="POST",
-    )
 
-    try:
-        with urlopen(request, timeout=OPENROUTER_TIMEOUT_SECONDS) as response:
-            body = json.loads(response.read().decode("utf-8"))
-    except HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="ignore")
-        raise OpenRouterError(f"OpenRouter request failed: {exc.code} {detail}") from exc
-    except URLError as exc:
-        raise OpenRouterError(f"OpenRouter connection failed: {exc.reason}") from exc
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": OPENROUTER_APP_URL,
+        "X-Title": OPENROUTER_APP_NAME,
+    }
+
+    max_retries = 3
+    body = None
+    for attempt in range(max_retries + 1):
+        try:
+            local_client = client
+            if local_client is None:
+                local_client = httpx.AsyncClient(
+                    timeout=httpx.Timeout(5.0, read=OPENROUTER_TIMEOUT_SECONDS)
+                )
+                must_close = True
+            else:
+                must_close = False
+
+            try:
+                response = await local_client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    json=payload,
+                    headers=headers,
+                )
+            finally:
+                if must_close:
+                    await local_client.aclose()
+
+            if response.status_code in (429, 503):
+                if attempt < max_retries:
+                    retry_after = response.headers.get("Retry-After")
+                    if retry_after and retry_after.isdigit():
+                        backoff = int(retry_after)
+                    else:
+                        backoff = 2 ** attempt
+                    
+                    logger.warning(
+                        "OpenRouter returned status %d. Retrying in %ds "
+                        "(attempt %d/%d)...",
+                        response.status_code,
+                        backoff,
+                        attempt + 1,
+                        max_retries,
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
+                else:
+                    raise OpenRouterError(
+                        f"OpenRouter request failed with status {response.status_code} "
+                        f"after {max_retries} retries"
+                    )
+
+            response.raise_for_status()
+            body = response.json()
+            break
+        except httpx.HTTPStatusError as exc:
+            raise OpenRouterError(
+                f"OpenRouter request failed: {exc.response.status_code} {exc.response.text}"
+            ) from exc
+        except httpx.RequestError as exc:
+            raise OpenRouterError(f"OpenRouter connection failed: {exc}") from exc
+
+    if not body:
+        raise OpenRouterError("OpenRouter request failed to return a response body")
 
     try:
         content = body["choices"][0]["message"]["content"]
@@ -536,9 +586,15 @@ def call_openrouter_json(system_prompt: str, user_prompt: str) -> dict[str, Any]
         raise OpenRouterError("OpenRouter returned an invalid response format") from exc
 
 
-def generate_session_payload(job_title: str, company: str, jd_text: str, resume_text: str) -> tuple[list[GapItem], int, list[QuestionItem], list[RoadmapDay]]:
+async def generate_session_payload(
+    job_title: str,
+    company: str,
+    jd_text: str,
+    resume_text: str,
+    client: httpx.AsyncClient | None = None,
+) -> tuple[list[GapItem], int, list[QuestionItem], list[RoadmapDay]]:
     try:
-        response = call_openrouter_json(
+        response = await call_openrouter_json(
             system_prompt=(
                 "You generate structured interview preparation data. "
                 "Return valid JSON only. Do not include markdown or explanations. "
@@ -639,12 +695,14 @@ def _fallback_answer_quality(question: str, answer: str) -> float:
         quality = min(1.0, quality + 0.15)
     return quality
 
-def evaluate_mock_attempt(question: str, answer: str) -> tuple[int, MockFeedback]:
+async def evaluate_mock_attempt(
+    question: str, answer: str, client: httpx.AsyncClient | None = None
+) -> tuple[int, MockFeedback]:
     # --- ML: always analyze confidence regardless of OpenRouter outcome ---
     confidence = ConfidenceAnalysis(**analyze_confidence(answer))
 
     try:
-        response = call_openrouter_json(
+        response = await call_openrouter_json(
             system_prompt=(
                 "You evaluate interview answers. "
                 "Return valid JSON only. Do not include markdown or explanations. "
@@ -658,6 +716,7 @@ def evaluate_mock_attempt(question: str, answer: str) -> tuple[int, MockFeedback
                 f"Candidate answer:\n{answer}\n\n"
                 "Evaluate the answer for a job-seeker preparation product."
             ),
+            client=client,
         )
         score = max(1, min(10, int(response["aiScore"])))
         feedback = MockFeedback(
@@ -773,12 +832,23 @@ app.add_middleware(
 
 
 @app.on_event("startup")
-def startup() -> None:
+async def startup() -> None:
+    app.state.httpx_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(5.0, read=OPENROUTER_TIMEOUT_SECONDS),
+        limits=httpx.Limits(max_keepalive_connections=20, max_connections=100)
+    )
     try:
         Base.metadata.create_all(bind=engine)
     except Exception:
         logging.getLogger(__name__).exception("Failed to create database tables")
         raise
+
+
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    client = getattr(app.state, "httpx_client", None)
+    if client is not None:
+        await client.aclose()
 
 
 @app.get("/api/health")
@@ -908,13 +978,17 @@ def get_session(user_id: str, session_id: str, _: UserTable = Depends(require_cu
 
 
 @app.post("/api/users/{user_id}/sessions", response_model=InterviewSession, status_code=status.HTTP_201_CREATED)
-def create_session(
+async def create_session(
     user_id: str,
     payload: CreateInterviewSessionRequest,
+    request: Request,
     _: UserTable = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> InterviewSession:
-    gap_analysis, readiness, question_bank, roadmap = generate_session_payload(payload.jobTitle, payload.company, payload.jdText, payload.resumeText)
+    client = getattr(request.app.state, "httpx_client", None)
+    gap_analysis, readiness, question_bank, roadmap = await generate_session_payload(
+        payload.jobTitle, payload.company, payload.jdText, payload.resumeText, client=client
+    )
 
     # --- ML: extract skills from resume ---
     skills = extract_skills(payload.resumeText)
@@ -997,9 +1071,10 @@ def get_mock_attempts(
 
 
 @app.post("/api/users/{user_id}/mocks", response_model=MockAttempt, status_code=status.HTTP_201_CREATED)
-def create_mock_attempt(
+async def create_mock_attempt(
     user_id: str,
     payload: CreateMockAttemptRequest,
+    request: Request,
     _: UserTable = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> MockAttempt:
@@ -1007,7 +1082,9 @@ def create_mock_attempt(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Question must not be empty")
     if not payload.userAnswer.strip():
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Answer must not be empty")
-    score, feedback = evaluate_mock_attempt(payload.question, payload.userAnswer)
+    
+    client = getattr(request.app.state, "httpx_client", None)
+    score, feedback = await evaluate_mock_attempt(payload.question, payload.userAnswer, client=client)
     row = MockAttemptTable(
         id=str(uuid4()),
         session_id=payload.sessionId,
