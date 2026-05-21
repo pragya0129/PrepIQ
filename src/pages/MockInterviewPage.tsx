@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { CreateMockAttemptInput, MockAttempt, InterviewSession } from "@/lib/store";
+import { apiRequest } from "@/lib/api";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -137,19 +138,13 @@ function getLocalFallbackQuestion(role: string, difficulty: string): string {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-async function fetchGeneratedQuestion(role: string, difficulty: string): Promise<string> {
+async function fetchGeneratedQuestion(userId: string, role: string, difficulty: string): Promise<string> {
   try {
-    const res = await fetch("/api/mock/generate-question", {
+    const data = await apiRequest<{ question: string }>(`/api/users/${userId}/mock/generate-question`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ role, difficulty }),
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err?.detail ?? "Failed to generate question");
-    }
-    const data = await res.json();
-    return data.question as string;
+    return data.question;
   } catch {
     // Backend unavailable — use local fallback questions
     return getLocalFallbackQuestion(role, difficulty);
@@ -162,6 +157,7 @@ export default function MockInterviewPage({
   sessions,
   attempts,
   onAddAttempt,
+  userId,
 }: MockInterviewPageProps) {
   // Existing state
   const [question, setQuestion] = useState("");
@@ -192,7 +188,7 @@ export default function MockInterviewPage({
     }
     setGenerating(true);
     try {
-      const q = await fetchGeneratedQuestion(selectedRole, selectedDifficulty);
+      const q = await fetchGeneratedQuestion(userId, selectedRole, selectedDifficulty);
       setQuestion(q);
       setResult(null); // clear previous result when a new question is loaded
       toast({ title: "Question generated!", description: `${selectedDifficulty} · ${selectedRole}` });

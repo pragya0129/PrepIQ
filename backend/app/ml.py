@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -19,22 +20,24 @@ logger = logging.getLogger(__name__)
 # Lazy-loaded ML models (loaded once on first use)
 # ---------------------------------------------------------------------------
 
-_spacy_nlp = None
-_tfidf_vectorizer = None
+_spacy_lock = threading.Lock()
+_spacy_cache: dict[str, object] = {}
 
 
 def _get_spacy():
-    """Lazy-load spaCy model."""
-    global _spacy_nlp
-    if _spacy_nlp is None:
-        try:
-            import spacy
-            _spacy_nlp = spacy.load("en_core_web_sm")
-            logger.info("spaCy model loaded successfully")
-        except OSError:
-            logger.warning("spaCy model 'en_core_web_sm' not found. Run: python -m spacy download en_core_web_sm")
-            _spacy_nlp = False  # Mark as failed so we don't retry
-    return _spacy_nlp if _spacy_nlp is not False else None
+    """Lazy-load spaCy model (thread-safe, no global mutation)."""
+    if "nlp" in _spacy_cache:
+        return _spacy_cache["nlp"]
+    with _spacy_lock:
+        if "nlp" not in _spacy_cache:
+            try:
+                import spacy
+                _spacy_cache["nlp"] = spacy.load("en_core_web_sm")
+                logger.info("spaCy model loaded successfully")
+            except OSError:
+                logger.warning("spaCy model 'en_core_web_sm' not found. Run: python -m spacy download en_core_web_sm")
+                _spacy_cache["nlp"] = None
+    return _spacy_cache["nlp"]
 
 
 # ---------------------------------------------------------------------------

@@ -9,10 +9,10 @@ import os
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 from uuid import uuid4
+
+import httpx
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -303,6 +303,18 @@ class OpenRouterError(RuntimeError):
     pass
 
 
+class SessionPayload(NamedTuple):
+    gap_analysis: list[GapItem]
+    readiness: int
+    question_bank: list[QuestionItem]
+    roadmap: list[RoadmapDay]
+
+
+class MockResult(NamedTuple):
+    score: int
+    feedback: MockFeedback
+
+
 class MockAttempt(BaseModel):
     id: str
     sessionId: str
@@ -462,26 +474,23 @@ def call_openrouter_json(system_prompt: str, user_prompt: str) -> dict[str, Any]
             {"role": "user", "content": user_prompt},
         ],
     }
-    request = Request(
-        "https://openrouter.ai/api/v1/chat/completions",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": OPENROUTER_APP_URL,
-            "X-Title": OPENROUTER_APP_NAME,
-        },
-        method="POST",
-    )
-
     try:
-        with urlopen(request, timeout=OPENROUTER_TIMEOUT_SECONDS) as response:
-            body = json.loads(response.read().decode("utf-8"))
-    except HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="ignore")
-        raise OpenRouterError(f"OpenRouter request failed: {exc.code} {detail}") from exc
-    except URLError as exc:
-        raise OpenRouterError(f"OpenRouter connection failed: {exc.reason}") from exc
+        with httpx.Client(timeout=OPENROUTER_TIMEOUT_SECONDS) as client:
+            response = client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                    "HTTP-Referer": OPENROUTER_APP_URL,
+                    "X-Title": OPENROUTER_APP_NAME,
+                },
+            )
+            response.raise_for_status()
+            body = response.json()
+    except httpx.HTTPStatusError as exc:
+        raise OpenRouterError(f"OpenRouter request failed: {exc.response.status_code} {exc.response.text}") from exc
+    except httpx.RequestError as exc:
+        raise OpenRouterError(f"OpenRouter connection failed: {exc}") from exc
 
     try:
         content = body["choices"][0]["message"]["content"]
@@ -490,7 +499,7 @@ def call_openrouter_json(system_prompt: str, user_prompt: str) -> dict[str, Any]
         raise OpenRouterError("OpenRouter returned an invalid response format") from exc
 
 
-def generate_session_payload(job_title: str, company: str, jd_text: str, resume_text: str) -> tuple[list[GapItem], int, list[QuestionItem], list[RoadmapDay]]:
+def generate_session_payload(job_title: str, company: str, jd_text: str, resume_text: str) -> SessionPayload:
     try:
         response = call_openrouter_json(
             system_prompt=(
@@ -518,7 +527,7 @@ def generate_session_payload(job_title: str, company: str, jd_text: str, resume_
         question_bank = [QuestionItem(**item) for item in response["questionBank"]]
         roadmap = [RoadmapDay(**item) for item in response["roadmap"]]
         if len(roadmap) >= 1 and len(question_bank) >= 1 and len(gap_analysis) >= 1:
-            return gap_analysis, readiness, question_bank, roadmap
+            return SessionPayload(gap_analysis, readiness, question_bank, roadmap)
     except (OpenRouterError, KeyError, TypeError, ValueError):
         pass
 
@@ -546,10 +555,10 @@ def generate_session_payload(job_title: str, company: str, jd_text: str, resume_
         RoadmapDay(day=4, focusArea="Mock Interviews", tasks=["Run 2 mock rounds", "Review weak answers", "Refine delivery and examples"]),
         RoadmapDay(day=5, focusArea="Final Review", tasks=["Review notes", "Prepare questions to ask", "Rest before the interview"]),
     ]
-    return gap_analysis, readiness, question_bank, roadmap
+    return SessionPayload(gap_analysis, readiness, question_bank, roadmap)
 
 
-def evaluate_mock_attempt(question: str, answer: str) -> tuple[int, MockFeedback]:
+def evaluate_mock_attempt(question: str, answer: str) -> MockResult:
     # --- ML: always analyze confidence regardless of OpenRouter outcome ---
     confidence = ConfidenceAnalysis(**analyze_confidence(answer))
 
@@ -578,7 +587,7 @@ def evaluate_mock_attempt(question: str, answer: str) -> tuple[int, MockFeedback
             confidenceAnalysis=confidence,
         )
         if feedback.strengths and feedback.missing:
-            return score, feedback
+            return MockResult(score, feedback)
     except (OpenRouterError, KeyError, TypeError, ValueError):
         pass
 
@@ -597,7 +606,7 @@ def evaluate_mock_attempt(question: str, answer: str) -> tuple[int, MockFeedback
         if score >= 5
         else "Needs more depth and concrete examples"
     )
-    return score, MockFeedback(
+    return MockResult(score, MockFeedback(
         strengths=["Good structure and organization", "Relevant experience was included", "Clear communication style"],
         missing=["Could include more specific metrics", "Missing stronger articulation of impact"],
         modelAnswer=(
@@ -607,7 +616,7 @@ def evaluate_mock_attempt(question: str, answer: str) -> tuple[int, MockFeedback
         ),
         oneLineVerdict=verdict,
         confidenceAnalysis=confidence,
-    )
+    ))
 
 
 def require_current_user(
@@ -782,7 +791,7 @@ def create_session(
     _: UserTable = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> InterviewSession:
-    gap_analysis, readiness, question_bank, roadmap = generate_session_payload(payload.jobTitle, payload.company, payload.jdText, payload.resumeText)
+    session_data = generate_session_payload(payload.jobTitle, payload.company, payload.jdText, payload.resumeText)
 
     # --- ML: extract skills from resume ---
     skills = extract_skills(payload.resumeText)
@@ -795,10 +804,10 @@ def create_session(
         company=payload.company,
         jd_text=payload.jdText,
         resume_text=payload.resumeText,
-        gap_analysis=[item.model_dump() for item in gap_analysis],
-        readiness_score=readiness,
-        question_bank=[item.model_dump() for item in question_bank],
-        roadmap=[item.model_dump() for item in roadmap],
+        gap_analysis=[item.model_dump() for item in session_data.gap_analysis],
+        readiness_score=session_data.readiness,
+        question_bank=[item.model_dump() for item in session_data.question_bank],
+        roadmap=[item.model_dump() for item in session_data.roadmap],
         extracted_skills=skills,
         ml_match_score=ml_score,
         created_at=utc_now(),
@@ -850,15 +859,15 @@ def create_mock_attempt(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Question must not be empty")
     if not payload.userAnswer.strip():
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Answer must not be empty")
-    score, feedback = evaluate_mock_attempt(payload.question, payload.userAnswer)
+    result = evaluate_mock_attempt(payload.question, payload.userAnswer)
     row = MockAttemptTable(
         id=str(uuid4()),
         session_id=payload.sessionId,
         user_id=user_id,
         question=payload.question,
         user_answer=payload.userAnswer,
-        ai_score=score,
-        ai_feedback=feedback.model_dump(),
+        ai_score=result.score,
+        ai_feedback=result.feedback.model_dump(),
         created_at=utc_now(),
     )
     db.add(row)
@@ -986,8 +995,12 @@ class GenerateQuestionResponse(BaseModel):
     question: str
 
 
-@app.post("/api/mock/generate-question", response_model=GenerateQuestionResponse)
-def generate_mock_question(payload: GenerateQuestionRequest) -> GenerateQuestionResponse:
+@app.post("/api/users/{user_id}/mock/generate-question", response_model=GenerateQuestionResponse)
+def generate_mock_question(
+    user_id: str,
+    payload: GenerateQuestionRequest,
+    _: UserTable = Depends(require_current_user),
+) -> GenerateQuestionResponse:
     if payload.role not in VALID_ROLES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

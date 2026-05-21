@@ -1,5 +1,5 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
-const SESSION_KEY = "prepiq_session";
+export const SESSION_KEY = "prepiq_session";
 
 interface SessionPayload {
   user: {
