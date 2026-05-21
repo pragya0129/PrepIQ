@@ -503,7 +503,7 @@ export default function JobTrackerPage({ jobs, onAddJob, onUpdateJob }: JobTrack
                       <td className="py-3 px-4 font-medium text-foreground">{job.companyName}</td>
                       <td className="py-3 px-4 text-muted-foreground">{job.jobTitle}</td>
                       <td className="py-3 px-4 text-muted-foreground">{job.dateApplied}</td>
-                      <td className="py-3 px-4">
+                      <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
                         <Select
                           value={job.status}
                           onValueChange={(v) => {
