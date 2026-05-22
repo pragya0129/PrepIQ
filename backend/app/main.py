@@ -1586,7 +1586,10 @@ class ExtractDocumentTextResponse(BaseModel):
 
 
 @app.post("/api/extract-document-text", response_model=ExtractDocumentTextResponse)
-async def extract_document_text(file: UploadFile = File(...)) -> ExtractDocumentTextResponse:
+async def extract_document_text(
+    file: UploadFile = File(...),
+    _: UserTable = Depends(require_current_user),
+) -> ExtractDocumentTextResponse:
     """Extract text from an uploaded PDF or DOCX file (in-memory only)."""
 
     filename = file.filename or "unknown"
