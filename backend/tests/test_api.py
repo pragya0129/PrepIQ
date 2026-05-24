@@ -5,7 +5,6 @@ import unittest
 from pathlib import Path
 from uuid import uuid4
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TEST_DB_PATH = REPO_ROOT / "backend" / "test-ci.db"
 sys.path.insert(0, str(REPO_ROOT))
@@ -14,9 +13,8 @@ os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB_PATH.as_posix()}"
 os.environ["APP_SECRET"] = "ci-test-secret"
 os.environ["CORS_ORIGINS"] = "http://localhost:8080,http://127.0.0.1:8080"
 
-from fastapi.testclient import TestClient
-
-from backend.app.main import app
+from backend.app.main import app  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
 
 class PrepIQApiTestCase(unittest.TestCase):
@@ -85,8 +83,10 @@ class PrepIQApiTestCase(unittest.TestCase):
         from backend.app import ml
 
         ml._spacy_nlp = False
+        _, headers = self.create_account()
         response = self.client.post(
             "/api/ml/extract-skills",
+            headers=headers,
             json={"text": "Built Python and React applications with PostgreSQL."},
         )
 
@@ -95,14 +95,16 @@ class PrepIQApiTestCase(unittest.TestCase):
         self.assertIsInstance(payload["skills"], list)
         self.assertEqual(payload["count"], len(payload["skills"]))
         self.assertIn("Python", payload["skills"])
-    
+
     def test_extract_skills_endpoint_returns_multiword_skills(self) -> None:
         from backend.app import ml
 
         ml._spacy_nlp = False
+        _, headers = self.create_account()
 
         response = self.client.post(
             "/api/ml/extract-skills",
+            headers=headers,
             json={
                 "text": """
                 Worked on machine-learning, spring_boot,
@@ -125,8 +127,10 @@ class PrepIQApiTestCase(unittest.TestCase):
         self.assertIn("JWT", skills)
 
     def test_match_score_endpoint_returns_score_and_label(self) -> None:
+        _, headers = self.create_account()
         response = self.client.post(
             "/api/ml/match-score",
+            headers=headers,
             json={
                 "resumeText": "Python developer with FastAPI, SQL, and machine learning experience.",
                 "jdText": "Looking for a Python engineer with FastAPI and SQL skills.",
@@ -141,8 +145,10 @@ class PrepIQApiTestCase(unittest.TestCase):
         self.assertIn(payload["label"], {"Strong match", "Moderate match", "Weak match"})
 
     def test_analyze_confidence_endpoint_returns_analysis_shape(self) -> None:
+        _, headers = self.create_account()
         response = self.client.post(
             "/api/ml/analyze-confidence",
+            headers=headers,
             json={
                 "text": "I led a team of 4 engineers and improved deployment speed by 30 percent.",
             },
@@ -155,6 +161,23 @@ class PrepIQApiTestCase(unittest.TestCase):
         self.assertIsInstance(payload["wordCount"], int)
         self.assertIn(payload["sentiment"], {"positive", "neutral", "negative"})
         self.assertGreater(payload["wordCount"], 0)
+
+    def test_ml_endpoints_require_auth(self) -> None:
+        response = self.client.post(
+            "/api/ml/extract-skills",
+            json={"text": "test"},
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_ml_endpoints_payload_size_limit(self) -> None:
+        _, headers = self.create_account()
+        large_text = "a" * 11000
+        response = self.client.post(
+            "/api/ml/extract-skills",
+            headers=headers,
+            json={"text": large_text},
+        )
+        self.assertEqual(response.status_code, 413)
 
     def test_signup_login_and_me(self) -> None:
         email = f"login-{uuid4().hex[:8]}@example.com"
@@ -196,6 +219,7 @@ class PrepIQApiTestCase(unittest.TestCase):
 
     def test_expired_token_returns_401(self) -> None:
         from datetime import timedelta
+
         from backend.app.main import encode_token, utc_now
 
         user_id, _ = self.create_account()
