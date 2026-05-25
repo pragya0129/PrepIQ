@@ -39,7 +39,9 @@ from sqlalchemy import (
     create_engine,
     delete,
     func,
+    inspect,
     select,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -1019,8 +1021,34 @@ async def startup() -> None:
     )
     try:
         Base.metadata.create_all(bind=engine)
+        # Dynamic migration fallback: Automatically add missing columns in existing tables
+        inspector = inspect(engine)
+        with engine.begin() as conn:
+            for table_name, table in Base.metadata.tables.items():
+                existing_cols = {c["name"] for c in inspector.get_columns(table_name)}
+                for col_name, column in table.columns.items():
+                    if col_name not in existing_cols:
+                        col_type = column.type.compile(engine.dialect)
+                        alter_query = (
+                            f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"
+                        )
+                        if column.default is not None:
+                            if hasattr(column.default, "arg") and not callable(
+                                column.default.arg
+                            ):
+                                default_val = column.default.arg
+                                if isinstance(default_val, str):
+                                    alter_query += f" DEFAULT '{default_val}'"
+                                elif isinstance(default_val, (int, float, bool)):
+                                    alter_query += f" DEFAULT {default_val}"
+                        logging.getLogger(__name__).info(
+                            f"Running database migration: {alter_query}"
+                        )
+                        conn.execute(text(alter_query))
     except Exception:
-        logging.getLogger(__name__).exception("Failed to create database tables")
+        logging.getLogger(__name__).exception(
+            "Failed to create/migrate database tables"
+        )
         raise
 
 
