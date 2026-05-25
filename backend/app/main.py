@@ -66,6 +66,12 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql+psycopg://postgres:postgres@localhost:5432/prepiq"
 )
 APP_SECRET = os.getenv("APP_SECRET", "change-me-in-production")
+_INSECURE_DEFAULTS = {"change-me-in-production", ""}
+if APP_SECRET in _INSECURE_DEFAULTS:
+    raise RuntimeError(
+        "APP_SECRET is unset or still has the default value. "
+        "Set a strong secret in your .env file before starting the app."
+    )
 ACCESS_TOKEN_TTL_HOURS = int(os.getenv("ACCESS_TOKEN_TTL_HOURS", "168"))
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
@@ -960,8 +966,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 
