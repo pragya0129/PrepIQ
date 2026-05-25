@@ -875,7 +875,6 @@ async def evaluate_mock_attempt(
 
     answer_text = answer.strip()
     answer_words = re.findall(r"\w+", answer_text)
-    
     # Pre-validation: Catch extremely short or purely gibberish answers early
     if len(answer_words) < 5 or len(answer_text) < 20 or max((len(w) for w in answer_words), default=0) > 25:
         return 1, MockFeedback(
