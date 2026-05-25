@@ -34,3 +34,5 @@ venv/
 *.njsproj
 *.sln
 *.sw?
+
+backend/test-ci.db

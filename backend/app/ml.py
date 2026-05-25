@@ -101,14 +101,28 @@ def extract_skills(text: str) -> list[str]:
 
     found_skills: set[str] = set()
     text_lower = text.lower()
+    # Normalize separators and spacing for multi-word skill matching
+    normalized_text = re.sub(r'[-_/]', ' ', text_lower)
+    normalized_text = re.sub(r'\s+', ' ', normalized_text).strip()
+
 
     # Method 1: Keyword matching against curated skill list
-    for skill in TECH_SKILLS:
-        # Use word boundary matching to avoid partial matches
-        pattern = r'\b' + re.escape(skill) + r'\b'
-        if re.search(pattern, text_lower):
-            # Store with proper capitalization
-            found_skills.add(skill.title() if len(skill) > 3 else skill.upper())
+    for skill in sorted(TECH_SKILLS, key=len, reverse=True):
+        # Multi-word skills need safer boundary handling
+        if ' ' in skill:
+            pattern = r'(?<!\w)' + re.escape(skill) + r'(?!\w)'
+        else:
+            pattern = r'\b' + re.escape(skill) + r'\b'
+
+        if re.search(pattern, normalized_text):
+
+            # Avoid adding shorter overlapping skills
+            if any(skill in existing.lower() for existing in found_skills):
+                continue
+
+            found_skills.add(
+                skill.title() if len(skill) > 3 else skill.upper()
+            )
 
     # Method 2: spaCy NER to catch additional entities
     nlp = _get_spacy()
@@ -197,11 +211,13 @@ def analyze_confidence(answer_text: str) -> dict[str, Any]:
 
     # --- Sentiment analysis with TextBlob ---
     polarity = 0.0
+
     try:
         from textblob import TextBlob
 
         blob = TextBlob(answer_text)
-        polarity = blob.sentiment.polarity  # -1.0 to 1.0
+        polarity = blob.sentiment.polarity        # -1.0 to 1.0
+
     except Exception as exc:
         logger.warning("TextBlob sentiment analysis failed: %s", exc)
 

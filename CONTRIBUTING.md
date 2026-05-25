@@ -43,19 +43,78 @@ Recommended branch names:
 ### Docker
 
 ```bash
+# macOS/Linux
 cp .env.example .env
+docker compose up --build
+```
+
+```powershell
+# Windows PowerShell
+Copy-Item .env.example .env
 docker compose up --build
 ```
 
 ### Manual
 
+Use Python 3.10-3.12 for local backend development. The backend Docker image uses Python 3.10, and CI currently verifies Python 3.10 and 3.11.
+
+Copy the environment template:
+
+```bash
+# macOS/Linux
+cp .env.example .env
+```
+
+```powershell
+# Windows PowerShell
+Copy-Item .env.example .env
+```
+
+For simple manual setup, update `.env` to use SQLite:
+
+```env
+DATABASE_URL=sqlite:///./backend/local.db
+APP_SECRET=replace-with-a-long-random-secret
+VITE_API_BASE_URL=
+```
+
+Install frontend dependencies:
+
 ```bash
 npm install
+```
+
+Create and activate a backend virtual environment:
+
+```bash
+# macOS/Linux
+python -m venv .venv
+source .venv/bin/activate
 python -m pip install -r backend/requirements.txt
 python -m spacy download en_core_web_sm
 python -m textblob.download_corpora
-cp .env.example .env
+```
+
+```powershell
+# Windows PowerShell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r backend/requirements.txt
+python -m spacy download en_core_web_sm
+python -m textblob.download_corpora
+```
+
+If you use Python 3.10 or 3.12 instead, replace `3.11` with your installed supported version.
+
+Run the backend from the activated virtual environment:
+
+```bash
 python -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Run the frontend in a separate terminal:
+
+```bash
 npm run dev
 ```
 
