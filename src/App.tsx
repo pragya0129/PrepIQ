@@ -37,7 +37,12 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error("Uncaught error:", error, errorInfo);
+    const sanitize = (s: string) => s.replace(/[\r\n]/g, " ");
+    console.error(
+      "Uncaught error:",
+      sanitize(error.message),
+      sanitize(errorInfo.componentStack ?? ""),
+    );
   }
 
   render() {

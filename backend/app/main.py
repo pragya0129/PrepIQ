@@ -4,7 +4,6 @@ import asyncio
 import base64
 import hashlib
 import hmac
-import io
 import json
 import logging
 import os
@@ -18,13 +17,11 @@ import httpx
 from fastapi import (
     Depends,
     FastAPI,
-    File,
     Header,
     HTTPException,
     Query,
     Request,
     Response,
-    UploadFile,
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
@@ -39,9 +36,7 @@ from sqlalchemy import (
     create_engine,
     delete,
     func,
-    inspect,
     select,
-    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -642,6 +637,7 @@ async def generate_session_payload(
                 f"Resume:\n{resume_text or 'Not provided'}\n\n"
                 "Generate concise, realistic prep content for an interview prep dashboard."
             ),
+            client=client,
         )
         gap_analysis = [GapItem(**item) for item in response["gapAnalysis"]]
         readiness = max(0, min(100, int(response["readinessScore"])))
@@ -755,59 +751,12 @@ async def generate_session_payload(
 
 def _significant_tokens(text: str) -> set[str]:
     stopwords = {
-        "the",
-        "and",
-        "a",
-        "an",
-        "of",
-        "to",
-        "is",
-        "are",
-        "in",
-        "for",
-        "on",
-        "with",
-        "that",
-        "this",
-        "it",
-        "as",
-        "at",
-        "by",
-        "from",
-        "be",
-        "or",
-        "not",
-        "have",
-        "has",
-        "was",
-        "were",
-        "will",
-        "can",
-        "i",
-        "you",
-        "your",
-        "we",
-        "our",
-        "they",
-        "their",
-        "what",
-        "which",
-        "when",
-        "where",
-        "why",
-        "how",
-        "do",
-        "does",
-        "did",
-        "so",
-        "but",
-        "if",
-        "then",
-        "because",
-        "there",
-        "these",
-        "those",
-        "meaning",
+        "the", "and", "a", "an", "of", "to", "is", "are", "in", "for", "on",
+        "with", "that", "this", "it", "as", "at", "by", "from", "be", "or",
+        "not", "have", "has", "was", "were", "will", "can", "i", "you", "your",
+        "we", "our", "they", "their", "what", "which", "when", "where", "why",
+        "how", "do", "does", "did", "so", "but", "if", "then", "because",
+        "there", "these", "those", "meaning",
     }
     return {
         token.lower()
@@ -817,33 +766,11 @@ def _significant_tokens(text: str) -> set[str]:
 
 
 FALLBACK_TECHNICAL_TERMS = {
-    "model",
-    "data",
-    "training",
-    "test",
-    "accuracy",
-    "performance",
-    "generalize",
-    "generalization",
-    "variance",
-    "bias",
-    "overfit",
-    "overfitting",
-    "unseen",
-    "feature",
-    "dataset",
-    "classification",
-    "regression",
-    "optimization",
-    "neural",
-    "network",
-    "algorithm",
-    "prediction",
-    "validation",
-    "loss",
-    "error",
-    "regularization",
-    "parameter",
+    "model", "data", "training", "test", "accuracy", "performance", "generalize",
+    "generalization", "variance", "bias", "overfit", "overfitting", "unseen",
+    "feature", "dataset", "classification", "regression", "optimization", "neural",
+    "network", "algorithm", "prediction", "validation", "loss", "error",
+    "regularization", "parameter",
 }
 
 
@@ -974,6 +901,7 @@ async def evaluate_mock_attempt(
 
 
 def require_current_user(
+    user_id: str | None = None,
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> UserTable:
@@ -982,8 +910,12 @@ def require_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing authorization token",
         )
+
     payload = decode_token(authorization.removeprefix("Bearer ").strip())
     token_user_id = payload.get("sub")
+    if user_id is not None and token_user_id != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
     user = db.get(UserTable, token_user_id)
     if not user:
         raise HTTPException(
@@ -1021,34 +953,8 @@ async def startup() -> None:
     )
     try:
         Base.metadata.create_all(bind=engine)
-        # Dynamic migration fallback: Automatically add missing columns in existing tables
-        inspector = inspect(engine)
-        with engine.begin() as conn:
-            for table_name, table in Base.metadata.tables.items():
-                existing_cols = {c["name"] for c in inspector.get_columns(table_name)}
-                for col_name, column in table.columns.items():
-                    if col_name not in existing_cols:
-                        col_type = column.type.compile(engine.dialect)
-                        alter_query = (
-                            f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"
-                        )
-                        if column.default is not None:
-                            if hasattr(column.default, "arg") and not callable(
-                                column.default.arg
-                            ):
-                                default_val = column.default.arg
-                                if isinstance(default_val, str):
-                                    alter_query += f" DEFAULT '{default_val}'"
-                                elif isinstance(default_val, (int, float, bool)):
-                                    alter_query += f" DEFAULT {default_val}"
-                        logging.getLogger(__name__).info(
-                            f"Running database migration: {alter_query}"
-                        )
-                        conn.execute(text(alter_query))
     except Exception:
-        logging.getLogger(__name__).exception(
-            "Failed to create/migrate database tables"
-        )
+        logging.getLogger(__name__).exception("Failed to create database tables")
         raise
 
 
@@ -1152,11 +1058,9 @@ def me(
 @app.get("/api/users/{user_id}/profile", response_model=CareerProfile | None)
 def get_profile(
     user_id: str,
-    current_user: UserTable = Depends(require_current_user),
+    _: UserTable = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> CareerProfile | None:
-    if current_user.id != user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     profile = db.get(ProfileTable, user_id)
     return profile_from_table(profile) if profile else None
 
@@ -1165,11 +1069,9 @@ def get_profile(
 def save_profile(
     user_id: str,
     profile: CareerProfile,
-    current_user: UserTable = Depends(require_current_user),
+    _: UserTable = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> CareerProfile:
-    if current_user.id != user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     if profile.userId != user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Profile user mismatch"
@@ -1223,11 +1125,9 @@ def save_profile(
 @app.get("/api/users/{user_id}/sessions", response_model=list[InterviewSession])
 def get_sessions(
     user_id: str,
-    current_user: UserTable = Depends(require_current_user),
+    _: UserTable = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> list[InterviewSession]:
-    if current_user.id != user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     rows = db.execute(
         select(InterviewSessionTable)
         .where(InterviewSessionTable.user_id == user_id)
@@ -1240,11 +1140,9 @@ def get_sessions(
 def get_session(
     user_id: str,
     session_id: str,
-    current_user: UserTable = Depends(require_current_user),
+    _: UserTable = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> InterviewSession:
-    if current_user.id != user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     row = db.execute(
         select(InterviewSessionTable).where(
             InterviewSessionTable.id == session_id,
@@ -1267,11 +1165,9 @@ async def create_session(
     user_id: str,
     payload: CreateInterviewSessionRequest,
     request: Request,
-    current_user: UserTable = Depends(require_current_user),
+    _: UserTable = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> InterviewSession:
-    if current_user.id != user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     client = getattr(request.app.state, "httpx_client", None)
     gap_analysis, readiness, question_bank, roadmap = await generate_session_payload(
         payload.jobTitle,
@@ -1313,11 +1209,9 @@ async def create_session(
 def delete_session(
     user_id: str,
     session_id: str,
-    current_user: UserTable = Depends(require_current_user),
+    _: UserTable = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> Response:
-    if current_user.id != user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     session = db.execute(
         select(InterviewSessionTable).where(
             InterviewSessionTable.id == session_id,
@@ -1352,11 +1246,9 @@ def get_mock_attempts(
     offset: int = Query(
         default=0, ge=0, description="Number of results that has to be skipped"
     ),
-    current_user: UserTable = Depends(require_current_user),
+    _: UserTable = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> PaginatedMockAttempts:
-    if current_user.id != user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     base_filter = MockAttemptTable.user_id == user_id
     total = db.execute(
         select(func.count()).select_from(MockAttemptTable).where(base_filter)
@@ -1389,11 +1281,9 @@ async def create_mock_attempt(
     user_id: str,
     payload: CreateMockAttemptRequest,
     request: Request,
-    current_user: UserTable = Depends(require_current_user),
+    _: UserTable = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> MockAttempt:
-    if current_user.id != user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     if not payload.question.strip():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1427,11 +1317,9 @@ async def create_mock_attempt(
 @app.get("/api/users/{user_id}/jobs", response_model=list[JobApplication])
 def get_jobs(
     user_id: str,
-    current_user: UserTable = Depends(require_current_user),
+    _: UserTable = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> list[JobApplication]:
-    if current_user.id != user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     rows = db.execute(
         select(JobApplicationTable)
         .where(JobApplicationTable.user_id == user_id)
@@ -1448,11 +1336,9 @@ def get_jobs(
 def create_job(
     user_id: str,
     payload: CreateJobApplicationRequest,
-    current_user: UserTable = Depends(require_current_user),
+    _: UserTable = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> JobApplication:
-    if current_user.id != user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     now = utc_now()
     row = JobApplicationTable(
         id=str(uuid4()),
@@ -1483,11 +1369,9 @@ def update_job(
     user_id: str,
     job_id: str,
     payload: UpdateJobApplicationRequest,
-    current_user: UserTable = Depends(require_current_user),
+    _: UserTable = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> JobApplication:
-    if current_user.id != user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     job = db.execute(
         select(JobApplicationTable).where(
             JobApplicationTable.id == job_id, JobApplicationTable.user_id == user_id
@@ -1528,11 +1412,9 @@ def update_job(
 def delete_job(
     user_id: str,
     job_id: str,
-    current_user: UserTable = Depends(require_current_user),
+    _: UserTable = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> Response:
-    if current_user.id != user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     job = db.execute(
         select(JobApplicationTable).where(
             JobApplicationTable.id == job_id,
@@ -1547,6 +1429,101 @@ def delete_job(
     db.delete(job)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+# ---------------------------------------------------------------------------
+# Question Generation endpoint (no DB required)
+# ---------------------------------------------------------------------------
+
+VALID_ROLES = {
+    "Frontend Developer",
+    "Backend Developer",
+    "Full Stack Developer",
+    "Machine Learning Engineer",
+    "Data Scientist",
+}
+
+VALID_DIFFICULTIES = {"Easy", "Medium", "Hard"}
+
+
+class GenerateQuestionRequest(BaseModel):
+    role: str
+    difficulty: str
+
+
+class GenerateQuestionResponse(BaseModel):
+    question: str
+
+
+@app.post("/api/users/{user_id}/mock/generate-question", response_model=GenerateQuestionResponse)
+async def generate_mock_question(
+    user_id: str,
+    payload: GenerateQuestionRequest,
+    _: UserTable = Depends(require_current_user),
+) -> GenerateQuestionResponse:
+    if payload.role not in VALID_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid role. Must be one of: {', '.join(sorted(VALID_ROLES))}",
+        )
+    if payload.difficulty not in VALID_DIFFICULTIES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid difficulty. Must be one of: {', '.join(sorted(VALID_DIFFICULTIES))}",
+        )
+
+    try:
+        response = await call_openrouter_json(
+            system_prompt=(
+                "You generate realistic technical and behavioral interview questions. "
+                "Return valid JSON only. Do not include markdown or explanations. "
+                'Use exactly this schema: {"question": "string"}. '
+                "Return only the question text — no numbering, no preamble, no tips."
+            ),
+            user_prompt=(
+                f"Generate one realistic {payload.difficulty}-level interview question "
+                f"for a {payload.role} position. "
+                "Return only the question itself as a JSON object."
+            ),
+        )
+        question_text = str(response.get("question", "")).strip()
+        if not question_text:
+            raise OpenRouterError("Empty question returned")
+        return GenerateQuestionResponse(question=question_text)
+
+    except OpenRouterError:
+        # Curated fallback questions indexed by role + difficulty
+        fallbacks: dict[str, dict[str, str]] = {
+            "Frontend Developer": {
+                "Easy": "What is the difference between `null` and `undefined` in JavaScript?",
+                "Medium": "Explain how React's reconciliation algorithm determines what to re-render.",
+                "Hard": "Design a virtualized list component that renders 100,000 rows without performance degradation.",
+            },
+            "Backend Developer": {
+                "Easy": "What is the difference between SQL and NoSQL databases?",
+                "Medium": "How would you design a rate-limiting middleware for a REST API?",
+                "Hard": "Describe how you would implement distributed transactions across two microservices without two-phase commit.",
+            },
+            "Full Stack Developer": {
+                "Easy": "What happens between a user typing a URL and the page loading in the browser?",
+                "Medium": "How would you handle authentication state across a React SPA and a Node.js API?",
+                "Hard": "Design a real-time collaborative document editor — describe both the frontend state model and the backend sync strategy.",
+            },
+            "Machine Learning Engineer": {
+                "Easy": "What is the difference between supervised and unsupervised learning?",
+                "Medium": "How would you handle class imbalance in a binary classification problem?",
+                "Hard": "Describe how you would architect an end-to-end MLOps pipeline for a model serving 10M predictions per day.",
+            },
+            "Data Scientist": {
+                "Easy": "What is the purpose of cross-validation in model evaluation?",
+                "Medium": "Explain the bias-variance tradeoff and how it guides your choice of model complexity.",
+                "Hard": "You suspect multicollinearity in your regression model. Walk through how you'd detect it and what you'd do.",
+            },
+        }
+        fallback_q = fallbacks.get(payload.role, {}).get(
+            payload.difficulty,
+            "Tell me about a challenging technical problem you solved and how you approached it.",
+        )
+        return GenerateQuestionResponse(question=fallback_q)
 
 
 # ---------------------------------------------------------------------------
@@ -1612,108 +1589,3 @@ def ml_match_score(payload: MatchScoreRequest) -> MatchScoreResponse:
 def ml_analyze_confidence(payload: ConfidenceRequest) -> ConfidenceAnalysis:
     result = analyze_confidence(payload.text)
     return ConfidenceAnalysis(**result)
-
-
-# ---------------------------------------------------------------------------
-# Document text extraction endpoint (Issue #93)
-# ---------------------------------------------------------------------------
-
-ALLOWED_EXTENSIONS = {".pdf", ".docx"}
-ALLOWED_MIME_TYPES = {
-    "application/pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-}
-MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
-
-
-class ExtractDocumentTextResponse(BaseModel):
-    text: str
-    filename: str
-    pages: int
-
-
-@app.post("/api/extract-document-text", response_model=ExtractDocumentTextResponse)
-async def extract_document_text(
-    file: UploadFile = File(...),
-    _: UserTable = Depends(require_current_user),
-) -> ExtractDocumentTextResponse:
-    """Extract text from an uploaded PDF or DOCX file (in-memory only)."""
-
-    filename = file.filename or "unknown"
-    ext = os.path.splitext(filename)[1].lower()
-
-    # Validate file extension
-    if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Unsupported file type '{ext}'. Only .pdf and .docx files are accepted.",
-        )
-
-    # Validate MIME type
-    content_type = (file.content_type or "").lower()
-    if content_type not in ALLOWED_MIME_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid MIME type '{content_type}'. Expected PDF or DOCX.",
-        )
-
-    # Read file into memory and validate size in a safe chunked manner
-    MAX_FILE_SIZE = 5 * 1024 * 1024
-
-    content = bytearray()
-    size = 0
-
-    try:
-        while chunk := await file.read(1024 * 1024):
-            size += len(chunk)
-
-            if size > MAX_FILE_SIZE:
-                raise HTTPException(
-                    status_code=400,
-                    detail="File size exceeds 5MB limit",
-                )
-
-            content.extend(chunk)
-
-        file_bytes = bytes(content)
-
-    finally:
-        await file.close()
-
-    try:
-        if ext == ".pdf":
-            import pdfplumber
-
-            pages_text: list[str] = []
-            with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-                page_count = len(pdf.pages)
-                for page in pdf.pages:
-                    text = page.extract_text()
-                    if text:
-                        pages_text.append(text)
-            extracted = "\n\n".join(pages_text)
-
-        else:  # .docx
-            from docx import Document
-
-            doc = Document(io.BytesIO(file_bytes))
-            paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-            extracted = "\n".join(paragraphs)
-            page_count = max(1, len(paragraphs) // 25)  # Approximate page count
-
-    except Exception as exc:
-        logger.warning("Document extraction failed for '%s': %s", filename, exc)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Failed to extract text from '{filename}'. The file may be corrupted or password-protected.",
-        ) from exc
-
-    if not extracted.strip():
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"No text content found in '{filename}'. The file may contain only images or be empty.",
-        )
-
-    return ExtractDocumentTextResponse(
-        text=extracted.strip(), filename=filename, pages=page_count
-    )

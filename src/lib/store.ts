@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { apiRequest } from "@/lib/api";
+import { apiRequest, SESSION_KEY } from "@/lib/api";
 
 export interface User {
   id: string;
@@ -151,8 +151,6 @@ export interface CreateJobApplicationInput {
   jobUrl: string;
   status: JobApplication["status"];
 }
-
-const SESSION_KEY = "prepiq_session";
 
 function getSession(): AuthSession | null {
   try {

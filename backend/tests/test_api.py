@@ -382,6 +382,51 @@ class PrepIQApiTestCase(unittest.TestCase):
         self.assertEqual(mocks_after_delete.json()["items"], [])
         self.assertEqual(mocks_after_delete.json()["total"], 0)
 
+    def test_generate_question_endpoint(self) -> None:
+        user_id, headers = self.create_account()
+
+        # 1. Unauthenticated request should fail with 401
+        res_unauth = self.client.post(
+            f"/api/users/{user_id}/mock/generate-question",
+            json={"role": "Frontend Developer", "difficulty": "Medium"},
+        )
+        self.assertEqual(res_unauth.status_code, 401)
+
+        # 2. Authenticated request with valid data should succeed with 200
+        res_auth = self.client.post(
+            f"/api/users/{user_id}/mock/generate-question",
+            headers=headers,
+            json={"role": "Frontend Developer", "difficulty": "Medium"},
+        )
+        self.assertEqual(res_auth.status_code, 200, res_auth.text)
+        self.assertIn("question", res_auth.json())
+        self.assertIsInstance(res_auth.json()["question"], str)
+
+        # 3. Accessing with another user's ID should fail with 403
+        other_user_id = str(uuid4())
+        res_other = self.client.post(
+            f"/api/users/{other_user_id}/mock/generate-question",
+            headers=headers,
+            json={"role": "Frontend Developer", "difficulty": "Medium"},
+        )
+        self.assertEqual(res_other.status_code, 403)
+
+        # 4. Invalid role should fail with 422
+        res_bad_role = self.client.post(
+            f"/api/users/{user_id}/mock/generate-question",
+            headers=headers,
+            json={"role": "Invalid Developer Role", "difficulty": "Medium"},
+        )
+        self.assertEqual(res_bad_role.status_code, 422)
+
+        # 5. Invalid difficulty should fail with 422
+        res_bad_diff = self.client.post(
+            f"/api/users/{user_id}/mock/generate-question",
+            headers=headers,
+            json={"role": "Frontend Developer", "difficulty": "Super Hard"},
+        )
+        self.assertEqual(res_bad_diff.status_code, 422)
+
 
 if __name__ == "__main__":
     unittest.main()
