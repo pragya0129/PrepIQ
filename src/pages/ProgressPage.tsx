@@ -143,6 +143,7 @@ export default function ProgressPage({
     doc.setFontSize(11);
     doc.setTextColor(100);
     doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 14, 30);
+    doc.setTextColor(0); // Reset text color to black
     
     const avgScore = mocks.length > 0 ? Math.round(mocks.reduce((sum, m) => sum + m.aiScore, 0) / mocks.length * 10) : 0;
     doc.text(`Total Mock Attempts: ${mocks.length}`, 14, 40);
@@ -151,17 +152,18 @@ export default function ProgressPage({
       doc.text(`Average Confidence: ${averageConfidence}%`, 14, 52);
     }
     
-    const tableData = mocks.map((m) => {
-      let qType = "Unknown";
-      for (const s of sessions) {
-        const match = s.questionBank.find(qb => qb.question === m.question);
-        if (match) {
-          qType = match.type.charAt(0).toUpperCase() + match.type.slice(1);
-          break;
-        }
+    // Precompute a lookup map for question types
+    const questionTypeMap = new Map<string, string>();
+    for (const s of sessions) {
+      for (const qb of s.questionBank) {
+        questionTypeMap.set(qb.question, qb.type.charAt(0).toUpperCase() + qb.type.slice(1));
       }
+    }
+    
+    const tableData = mocks.map((m) => {
+      const qType = questionTypeMap.get(m.question) || "Unknown";
       const date = new Date(m.createdAt).toLocaleDateString();
-      const score = `${m.aiScore}/10`;
+      const score = `${Math.round(m.aiScore * 10)}/100`;
       const feedback = m.aiFeedback?.oneLineVerdict || "No feedback available";
       return [date, qType, score, m.question, feedback];
     });
