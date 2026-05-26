@@ -661,7 +661,7 @@ async def generate_session_payload(
         if not isinstance(response, dict):
             response = {}
         norm_res = {k.lower(): v for k, v in response.items()}
-        
+
         # Helper to normalize dict keys to match Pydantic expectations
         def norm_dict(d, mapping):
             if not isinstance(d, dict):
@@ -697,13 +697,13 @@ async def generate_session_payload(
 
         raw_gap = norm_res.get("gapanalysis", [])
         gap_analysis = [GapItem(**norm_dict(item, gap_mapping)) for item in raw_gap if isinstance(item, dict)]
-        
+
         readiness_val = norm_res.get("readinessscore", norm_res.get("readiness", 50))
         readiness = max(0, min(100, int(readiness_val)))
-        
+
         raw_questions = norm_res.get("questionbank", [])
         question_bank = [QuestionItem(**norm_dict(item, q_mapping)) for item in raw_questions if isinstance(item, dict)]
-        
+
         raw_roadmap = norm_res.get("roadmap", [])
         roadmap = [RoadmapDay(**norm_dict(item, roadmap_mapping)) for item in raw_roadmap if isinstance(item, dict)]
 
@@ -912,15 +912,15 @@ async def evaluate_mock_attempt(
         if not isinstance(response, dict):
             response = {}
         norm_res = {k.lower(): v for k, v in response.items()}
-        
+
         score_val = norm_res.get("aiscore", norm_res.get("score", 7))
         score = max(1, min(10, int(score_val)))
-        
+
         strengths = norm_res.get("strengths", ["Attempted to answer"])
         missing = norm_res.get("missing", norm_res.get("areas to improve", norm_res.get("weaknesses", [])))
         model_answer = norm_res.get("modelanswer", norm_res.get("model_answer", "Practice structured responses using STAR method."))
         verdict = norm_res.get("onelineverdict", norm_res.get("verdict", "Basic response submitted."))
-        
+
         feedback = MockFeedback(
             strengths=[str(item) for item in strengths] if isinstance(strengths, list) else [str(strengths)],
             missing=[str(item) for item in missing] if isinstance(missing, list) else [str(missing)],
