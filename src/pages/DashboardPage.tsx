@@ -26,16 +26,23 @@ interface DashboardPageProps {
   jobs: JobApplication[];
 }
 
+const ONBOARDING_DISMISSED_KEY = "prepiq_onboarding_dismissed";
+
 export default function DashboardPage({ user, profile, sessions, mocks, jobs }: DashboardPageProps) {
   const navigate = useNavigate();
 
   const [isDismissed, setIsDismissed] = useState(() => {
-    return localStorage.getItem("onboardingDismissed") === "true";
+    if (typeof window !== "undefined") {
+      return localStorage.getItem(ONBOARDING_DISMISSED_KEY) === "true";
+    }
+    return false;
   });
 
   const dismissOnboarding = () => {
     setIsDismissed(true);
-    localStorage.setItem("onboardingDismissed", "true");
+    if (typeof window !== "undefined") {
+      localStorage.setItem(ONBOARDING_DISMISSED_KEY, "true");
+    }
   };
 
   const completionPercent = profile?.onboardingComplete ? 100 : 0;
@@ -98,6 +105,7 @@ export default function DashboardPage({ user, profile, sessions, mocks, jobs }: 
           <button
             onClick={dismissOnboarding}
             className="absolute top-4 right-4 p-1.5 rounded-full hover:bg-secondary text-muted-foreground transition-colors"
+            aria-label="Dismiss onboarding checklist"
           >
             <X className="w-4 h-4" />
           </button>
@@ -110,7 +118,13 @@ export default function DashboardPage({ user, profile, sessions, mocks, jobs }: 
           </div>
 
           <div className="flex items-center gap-3 mb-6">
-            <div className="flex-1 h-2 bg-secondary rounded-full overflow-hidden">
+            <div 
+              className="flex-1 h-2 bg-secondary rounded-full overflow-hidden"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={onboardingProgress}
+            >
               <div 
                 className="h-full bg-primary transition-all duration-1000 ease-out"
                 style={{ width: `${onboardingProgress}%` }}
