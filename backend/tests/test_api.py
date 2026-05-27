@@ -382,6 +382,33 @@ class PrepIQApiTestCase(unittest.TestCase):
         self.assertEqual(mocks_after_delete.json()["items"], [])
         self.assertEqual(mocks_after_delete.json()["total"], 0)
 
+    def test_session_creation_validation(self) -> None:
+        user_id, headers = self.create_account()
+
+        res_empty_job = self.client.post(
+            f"/api/users/{user_id}/sessions",
+            headers=headers,
+            json={
+                "jobTitle": "   ",
+                "company": "PrepIQ",
+                "jdText": "Build React applications",
+                "resumeText": "Worked on React and TypeScript projects",
+            },
+        )
+        self.assertEqual(res_empty_job.status_code, 422)
+
+        res_empty_company = self.client.post(
+            f"/api/users/{user_id}/sessions",
+            headers=headers,
+            json={
+                "jobTitle": "Frontend Engineer",
+                "company": "   ",
+                "jdText": "Build React applications",
+                "resumeText": "Worked on React and TypeScript projects",
+            },
+        )
+        self.assertEqual(res_empty_company.status_code, 422)
+
     def test_generate_question_endpoint(self) -> None:
         user_id, headers = self.create_account()
 
