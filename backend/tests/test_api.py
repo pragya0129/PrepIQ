@@ -388,6 +388,39 @@ class PrepIQApiTestCase(unittest.TestCase):
         self.assertEqual(mocks_after_delete.json()["items"], [])
         self.assertEqual(mocks_after_delete.json()["total"], 0)
 
+    def test_session_creation_validation(self) -> None:
+        user_id, headers = self.create_account()
+
+        res_empty_job = self.client.post(
+            f"/api/users/{user_id}/sessions",
+            headers=headers,
+            json={
+                "jobTitle": "   ",
+                "company": "PrepIQ",
+                "jdText": "Build React applications",
+                "resumeText": "Worked on React and TypeScript projects",
+            },
+        )
+        self.assertEqual(res_empty_job.status_code, 422)
+        payload_job = res_empty_job.json()
+        self.assertEqual(payload_job["detail"][0]["loc"], ["body", "jobTitle"])
+        self.assertIn("cannot be empty or whitespace-only", payload_job["detail"][0]["msg"])
+
+        res_empty_company = self.client.post(
+            f"/api/users/{user_id}/sessions",
+            headers=headers,
+            json={
+                "jobTitle": "Frontend Engineer",
+                "company": "   ",
+                "jdText": "Build React applications",
+                "resumeText": "Worked on React and TypeScript projects",
+            },
+        )
+        self.assertEqual(res_empty_company.status_code, 422)
+        payload_company = res_empty_company.json()
+        self.assertEqual(payload_company["detail"][0]["loc"], ["body", "company"])
+        self.assertIn("cannot be empty or whitespace-only", payload_company["detail"][0]["msg"])
+
     def test_generate_question_endpoint(self) -> None:
         user_id, headers = self.create_account()
 

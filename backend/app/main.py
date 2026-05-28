@@ -25,7 +25,7 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -354,6 +354,13 @@ class CreateInterviewSessionRequest(BaseModel):
     company: str
     jdText: str = ""
     resumeText: str = ""
+
+    @field_validator("jobTitle", "company", mode="after")
+    @classmethod
+    def check_not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("cannot be empty or whitespace-only")
+        return v
 
 
 class ConfidenceAnalysis(BaseModel):
