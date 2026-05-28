@@ -87,7 +87,7 @@ interface ProtectedRouteProps {
 
 function ProtectedRoute({ hydrated, user, logout, resourceErrorMessage, children }: ProtectedRouteProps) {
   if (!hydrated) return <RouteFallback />;
-  if (false && !user) return <Navigate to="/login" replace />;
+  if (!user) return <Navigate to="/login" replace />;
   return (
     <AppLayout onLogout={logout}>
       <div className="space-y-4">
