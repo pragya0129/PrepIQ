@@ -404,6 +404,7 @@ export function useJobApplications(userId: string | undefined) {
     return deleteJobMutation.mutateAsync(id);
   }, [deleteJobMutation]);
 
+  const jobs = jobsQuery.data ?? [];
   return { jobs, addJob, updateJob, deleteJob, jobsError: jobsQuery.error instanceof Error ? jobsQuery.error.message : null, jobsLoading: jobsQuery.isLoading };
 }
 
