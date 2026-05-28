@@ -7,6 +7,8 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/AppLayout";
 import { useAuth, useCareerProfile, useInterviewSessions, useMockAttempts, useJobApplications } from "@/lib/store";
+import Privacy from "./pages/Privacy";
+import Terms from "./pages/Terms";
 
 const Index = lazy(() => import("./pages/Index"));
 const NotFound = lazy(() => import("./pages/NotFound"));
@@ -18,8 +20,6 @@ const InterviewPrepPage = lazy(() => import("./pages/InterviewPrepPage"));
 const MockInterviewPage = lazy(() => import("./pages/MockInterviewPage"));
 const JobTrackerPage = lazy(() => import("./pages/JobTrackerPage"));
 const ProgressPage = lazy(() => import("./pages/ProgressPage"));
-const Privacy = lazy(() => import("./pages/Privacy"));
-const Terms = lazy(() => import("./pages/Terms"));
 
 const queryClient = new QueryClient();
 
@@ -103,19 +103,7 @@ function ProtectedRoute({ hydrated, user, logout, resourceErrorMessage, children
 }
 
 function AppRoutes() {
-  const {
-    login,
-    signup,
-    logout,
-  } = useAuth();
-
-  const hydrated = true;
-
-  const user = {
-    id: "demo-user",
-    name: "Demo User",
-    email: "demo@example.com",
-  };
+  const { user, login, signup, logout, hydrated } = useAuth();
   const { profile, saveProfile, profileError } = useCareerProfile(user?.id);
   const { sessions, addSession, sessionsError } = useInterviewSessions(user?.id);
   const { attempts, addAttempt, attemptsError } = useMockAttempts(user?.id);
