@@ -150,7 +150,7 @@ class PrepIQApiTestCase(unittest.TestCase):
         self.assertIn("semanticScore", payload)
         self.assertIn("keywordOverlapScore", payload)
         self.assertIn("overallScore", payload)
-        
+
         # Acceptance criteria: "ML engineer" resume matched to "machine learning" JD scores > 70
         self.assertGreater(payload["score"], 70)
 

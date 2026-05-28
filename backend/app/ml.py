@@ -165,7 +165,7 @@ def extract_skills(text: str) -> list[str]:
 
 def compute_match_score(resume_text: str, jd_text: str) -> dict[str, int]:
     """
-    Compute similarity between resume and job description using semantic embeddings 
+    Compute similarity between resume and job description using semantic embeddings
     and TF-IDF + cosine similarity as a fallback.
 
     Returns a dict with semanticScore, keywordOverlapScore, and overallScore.
@@ -198,10 +198,10 @@ def compute_match_score(resume_text: str, jd_text: str) -> dict[str, int]:
     if model:
         try:
             from sklearn.metrics.pairwise import cosine_similarity
-            
+
             embeddings = model.encode([resume_text, jd_text])
             sim = cosine_similarity(embeddings[0:1], embeddings[1:2])[0][0]
-            
+
             semantic_score = min(100, max(0, int(sim * 100)))
         except Exception as exc:
             logger.warning("Semantic match score failed: %s", exc)
