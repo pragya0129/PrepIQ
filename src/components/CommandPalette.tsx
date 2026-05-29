@@ -42,7 +42,7 @@ export function CommandPalette() {
         window.addEventListener("keydown", down);
 
         return () => window.removeEventListener("keydown", down);
-    }, []);
+    }, [location.pathname]);
     useEffect(() => {
         if (open) {
             setTimeout(() => {
