@@ -106,6 +106,9 @@ class UserTable(Base):
     name: Mapped[str] = mapped_column(String(255))
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
+    anonymous_mode: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
@@ -201,7 +204,9 @@ class MentorChatHistoryTable(Base):
     __tablename__ = "mentor_chat_history"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    session_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
+    session_id: Mapped[str | None] = mapped_column(
+        String(36), index=True, nullable=True
+    )
     user_id: Mapped[str] = mapped_column(String(36), index=True)
     role: Mapped[str] = mapped_column(String(20))
     content: Mapped[str] = mapped_column(Text)
@@ -282,6 +287,7 @@ class User(BaseModel):
     id: str
     name: str
     email: str
+    anonymousMode: bool = False
 
 
 class AuthResponse(BaseModel):
@@ -476,7 +482,12 @@ class UpdateJobApplicationRequest(BaseModel):
 
 
 def user_from_table(user: UserTable) -> User:
-    return User(id=user.id, name=user.name, email=user.email)
+    return User(
+        id=user.id,
+        name=user.name,
+        email=user.email,
+        anonymousMode=getattr(user, "anonymous_mode", False),
+    )
 
 
 def profile_from_table(profile: ProfileTable) -> CareerProfile:
@@ -573,7 +584,9 @@ async def call_openrouter_json(
         provider_name = "Gemini"
     else:
         if not OPENROUTER_API_KEY:
-            raise OpenRouterError("No API key configured (neither Gemini nor OpenRouter)")
+            raise OpenRouterError(
+                "No API key configured (neither Gemini nor OpenRouter)"
+            )
         url = "https://openrouter.ai/api/v1/chat/completions"
         model = OPENROUTER_MODEL
         headers = {
@@ -625,8 +638,7 @@ async def call_openrouter_json(
                         backoff = 2**attempt
 
                     logger.warning(
-                        "%s returned status %d. Retrying in %ds "
-                        "(attempt %d/%d)...",
+                        "%s returned status %d. Retrying in %ds (attempt %d/%d)...",
                         provider_name,
                         response.status_code,
                         backoff,
@@ -652,7 +664,9 @@ async def call_openrouter_json(
             raise OpenRouterError(f"{provider_name} connection failed: {exc}") from exc
 
     if not body:
-        raise OpenRouterError(f"{provider_name} request failed to return a response body")
+        raise OpenRouterError(
+            f"{provider_name} request failed to return a response body"
+        )
 
     try:
         raw_content = body["choices"][0]["message"]["content"]
@@ -668,8 +682,9 @@ async def call_openrouter_json(
             content = content.strip()
         return json.loads(content)
     except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-        raise OpenRouterError(f"{provider_name} returned an invalid response format") from exc
-
+        raise OpenRouterError(
+            f"{provider_name} returned an invalid response format"
+        ) from exc
 
 
 async def generate_session_payload(
@@ -728,31 +743,43 @@ async def generate_session_payload(
             "skill": ["skill", "name"],
             "have": ["have", "current"],
             "need": ["need", "required"],
-            "gapLevel": ["gaplevel", "level", "gap"]
+            "gapLevel": ["gaplevel", "level", "gap"],
         }
         q_mapping = {
             "question": ["question", "text"],
             "type": ["type", "category"],
             "difficulty": ["difficulty", "level"],
-            "tip": ["tip", "hint"]
+            "tip": ["tip", "hint"],
         }
         roadmap_mapping = {
             "day": ["day", "number"],
             "focusArea": ["focusarea", "area", "focus"],
-            "tasks": ["tasks", "todo"]
+            "tasks": ["tasks", "todo"],
         }
 
         raw_gap = norm_res.get("gapanalysis", [])
-        gap_analysis = [GapItem(**norm_dict(item, gap_mapping)) for item in raw_gap if isinstance(item, dict)]
+        gap_analysis = [
+            GapItem(**norm_dict(item, gap_mapping))
+            for item in raw_gap
+            if isinstance(item, dict)
+        ]
 
         readiness_val = norm_res.get("readinessscore", norm_res.get("readiness", 50))
         readiness = max(0, min(100, int(readiness_val)))
 
         raw_questions = norm_res.get("questionbank", [])
-        question_bank = [QuestionItem(**norm_dict(item, q_mapping)) for item in raw_questions if isinstance(item, dict)]
+        question_bank = [
+            QuestionItem(**norm_dict(item, q_mapping))
+            for item in raw_questions
+            if isinstance(item, dict)
+        ]
 
         raw_roadmap = norm_res.get("roadmap", [])
-        roadmap = [RoadmapDay(**norm_dict(item, roadmap_mapping)) for item in raw_roadmap if isinstance(item, dict)]
+        roadmap = [
+            RoadmapDay(**norm_dict(item, roadmap_mapping))
+            for item in raw_roadmap
+            if isinstance(item, dict)
+        ]
 
         if len(roadmap) >= 1 and len(question_bank) >= 1 and len(gap_analysis) >= 1:
             return gap_analysis, readiness, question_bank, roadmap, False
@@ -864,12 +891,59 @@ async def generate_session_payload(
 
 def _significant_tokens(text: str) -> set[str]:
     stopwords = {
-        "the", "and", "a", "an", "of", "to", "is", "are", "in", "for", "on",
-        "with", "that", "this", "it", "as", "at", "by", "from", "be", "or",
-        "not", "have", "has", "was", "were", "will", "can", "i", "you", "your",
-        "we", "our", "they", "their", "what", "which", "when", "where", "why",
-        "how", "do", "does", "did", "so", "but", "if", "then", "because",
-        "there", "these", "those", "meaning",
+        "the",
+        "and",
+        "a",
+        "an",
+        "of",
+        "to",
+        "is",
+        "are",
+        "in",
+        "for",
+        "on",
+        "with",
+        "that",
+        "this",
+        "it",
+        "as",
+        "at",
+        "by",
+        "from",
+        "be",
+        "or",
+        "not",
+        "have",
+        "has",
+        "was",
+        "were",
+        "will",
+        "can",
+        "i",
+        "you",
+        "your",
+        "we",
+        "our",
+        "they",
+        "their",
+        "what",
+        "which",
+        "when",
+        "where",
+        "why",
+        "how",
+        "do",
+        "does",
+        "did",
+        "so",
+        "but",
+        "if",
+        "then",
+        "because",
+        "there",
+        "these",
+        "those",
+        "meaning",
     }
     return {
         token.lower()
@@ -879,11 +953,33 @@ def _significant_tokens(text: str) -> set[str]:
 
 
 FALLBACK_TECHNICAL_TERMS = {
-    "model", "data", "training", "test", "accuracy", "performance", "generalize",
-    "generalization", "variance", "bias", "overfit", "overfitting", "unseen",
-    "feature", "dataset", "classification", "regression", "optimization", "neural",
-    "network", "algorithm", "prediction", "validation", "loss", "error",
-    "regularization", "parameter",
+    "model",
+    "data",
+    "training",
+    "test",
+    "accuracy",
+    "performance",
+    "generalize",
+    "generalization",
+    "variance",
+    "bias",
+    "overfit",
+    "overfitting",
+    "unseen",
+    "feature",
+    "dataset",
+    "classification",
+    "regression",
+    "optimization",
+    "neural",
+    "network",
+    "algorithm",
+    "prediction",
+    "validation",
+    "loss",
+    "error",
+    "regularization",
+    "parameter",
 }
 
 
@@ -921,7 +1017,11 @@ async def evaluate_mock_attempt(
     answer_text = answer.strip()
     answer_words = re.findall(r"\w+", answer_text)
     # Pre-validation: Catch extremely short or purely gibberish answers early
-    if len(answer_words) < 5 or len(answer_text) < 20 or max((len(w) for w in answer_words), default=0) > 25:
+    if (
+        len(answer_words) < 5
+        or len(answer_text) < 20
+        or max((len(w) for w in answer_words), default=0) > 25
+    ):
         return 1, MockFeedback(
             strengths=["Attempted to respond"],
             missing=[
@@ -966,13 +1066,26 @@ async def evaluate_mock_attempt(
         score = max(1, min(10, int(score_val)))
 
         strengths = norm_res.get("strengths", ["Attempted to answer"])
-        missing = norm_res.get("missing", norm_res.get("areas to improve", norm_res.get("weaknesses", [])))
-        model_answer = norm_res.get("modelanswer", norm_res.get("model_answer", "Practice structured responses using STAR method."))
-        verdict = norm_res.get("onelineverdict", norm_res.get("verdict", "Basic response submitted."))
+        missing = norm_res.get(
+            "missing", norm_res.get("areas to improve", norm_res.get("weaknesses", []))
+        )
+        model_answer = norm_res.get(
+            "modelanswer",
+            norm_res.get(
+                "model_answer", "Practice structured responses using STAR method."
+            ),
+        )
+        verdict = norm_res.get(
+            "onelineverdict", norm_res.get("verdict", "Basic response submitted.")
+        )
 
         feedback = MockFeedback(
-            strengths=[str(item) for item in strengths] if isinstance(strengths, list) else [str(strengths)],
-            missing=[str(item) for item in missing] if isinstance(missing, list) else [str(missing)],
+            strengths=[str(item) for item in strengths]
+            if isinstance(strengths, list)
+            else [str(strengths)],
+            missing=[str(item) for item in missing]
+            if isinstance(missing, list)
+            else [str(missing)],
             modelAnswer=str(model_answer),
             oneLineVerdict=str(verdict),
             confidenceAnalysis=confidence,
@@ -1105,27 +1218,58 @@ async def startup() -> None:
         from uuid import uuid4
 
         from sqlalchemy import text
+
         with engine.begin() as conn:
             try:
-                conn.execute(text("ALTER TABLE mentor_chat_history ADD COLUMN session_id VARCHAR(36)"))
+                conn.execute(
+                    text(
+                        "ALTER TABLE users ADD COLUMN anonymous_mode BOOLEAN DEFAULT FALSE"
+                    )
+                )
             except Exception:
                 pass
 
             try:
-                res = conn.execute(text("SELECT COUNT(*) FROM mentor_chat_history WHERE session_id IS NULL"))
+                conn.execute(
+                    text(
+                        "ALTER TABLE mentor_chat_history ADD COLUMN session_id VARCHAR(36)"
+                    )
+                )
+            except Exception:
+                pass
+
+            try:
+                res = conn.execute(
+                    text(
+                        "SELECT COUNT(*) FROM mentor_chat_history WHERE session_id IS NULL"
+                    )
+                )
                 if res.scalar() > 0:
-                    users = conn.execute(text("SELECT DISTINCT user_id FROM mentor_chat_history WHERE session_id IS NULL")).fetchall()
+                    users = conn.execute(
+                        text(
+                            "SELECT DISTINCT user_id FROM mentor_chat_history WHERE session_id IS NULL"
+                        )
+                    ).fetchall()
                     for row in users:
                         uid = row[0]
                         sid = str(uuid4())
                         now_dt = utc_now()
                         conn.execute(
-                            text("INSERT INTO mentor_chat_sessions (id, user_id, title, created_at, updated_at) VALUES (:id, :uid, :title, :now, :now)"),
-                            {"id": sid, "uid": uid, "title": "Previous Chats", "now": now_dt}
+                            text(
+                                "INSERT INTO mentor_chat_sessions (id, user_id, title, created_at, updated_at) VALUES (:id, :uid, :title, :now, :now)"
+                            ),
+                            {
+                                "id": sid,
+                                "uid": uid,
+                                "title": "Previous Chats",
+                                "now": now_dt,
+                            },
                         )
                         conn.execute(
-                            text("UPDATE mentor_chat_history SET session_id = :sid WHERE user_id = :uid AND session_id IS NULL"),
-                            {"sid": sid, "uid": uid}
+                            text(
+                                "UPDATE mentor_chat_history SET session_id = :sid WHERE user_id = :uid AND session_id IS NULL"
+                            ),
+                            {"sid": sid, "uid": uid},
                         )
             except Exception as e:
                 logging.getLogger(__name__).warning(f"Migration error: {e}")
@@ -1214,9 +1358,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)) -> AuthRespons
 
 
 @app.get("/api/auth/me", response_model=User)
-def me(
-    current_user: UserTable = Depends(require_current_user)
-) -> User:
+def me(current_user: UserTable = Depends(require_current_user)) -> User:
     return user_from_table(current_user)
 
 
@@ -1335,7 +1477,13 @@ async def create_session(
     db: Session = Depends(get_db),
 ) -> InterviewSession:
     client = getattr(request.app.state, "httpx_client", None)
-    gap_analysis, readiness, question_bank, roadmap, is_estimated = await generate_session_payload(
+    (
+        gap_analysis,
+        readiness,
+        question_bank,
+        roadmap,
+        is_estimated,
+    ) = await generate_session_payload(
         payload.jobTitle,
         payload.company,
         payload.jdText,
@@ -1598,6 +1746,7 @@ def delete_job(
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+
 # ---------------------------------------------------------------------------
 # Question Generation endpoint (no DB required)
 # ---------------------------------------------------------------------------
@@ -1622,7 +1771,10 @@ class GenerateQuestionResponse(BaseModel):
     question: str
 
 
-@app.post("/api/users/{user_id}/mock/generate-question", response_model=GenerateQuestionResponse)
+@app.post(
+    "/api/users/{user_id}/mock/generate-question",
+    response_model=GenerateQuestionResponse,
+)
 async def generate_mock_question(
     user_id: str,
     payload: GenerateQuestionRequest,
@@ -1755,7 +1907,7 @@ def ml_match_score(payload: MatchScoreRequest) -> MatchScoreResponse:
         overallScore=scores["overallScore"],
         semanticScore=scores["semanticScore"],
         keywordOverlapScore=scores["keywordOverlapScore"],
-        label=label
+        label=label,
     )
 
 
@@ -1776,8 +1928,10 @@ class MentorChatSessionModel(BaseModel):
     createdAt: str
     updatedAt: str
 
+
 class MentorChatSessionUpdate(BaseModel):
     title: str
+
 
 class MentorChatMessage(BaseModel):
     id: str
@@ -1785,15 +1939,19 @@ class MentorChatMessage(BaseModel):
     content: str
     created_at: str
 
+
 class MentorChatRequest(BaseModel):
     message: str
 
 
-@app.get("/api/users/{user_id}/mentor-chat/sessions", response_model=list[MentorChatSessionModel])
+@app.get(
+    "/api/users/{user_id}/mentor-chat/sessions",
+    response_model=list[MentorChatSessionModel],
+)
 def get_mentor_chat_sessions(
     user_id: str,
     db: Session = Depends(get_db),
-    user: User = Depends(require_current_user)
+    user: User = Depends(require_current_user),
 ) -> list[MentorChatSessionModel]:
     if user.id != user_id:
         raise HTTPException(status_code=403, detail="Forbidden")
@@ -1815,11 +1973,13 @@ def get_mentor_chat_sessions(
     ]
 
 
-@app.post("/api/users/{user_id}/mentor-chat/sessions", response_model=MentorChatSessionModel)
+@app.post(
+    "/api/users/{user_id}/mentor-chat/sessions", response_model=MentorChatSessionModel
+)
 def create_mentor_chat_session(
     user_id: str,
     db: Session = Depends(get_db),
-    user: User = Depends(require_current_user)
+    user: User = Depends(require_current_user),
 ) -> MentorChatSessionModel:
     if user.id != user_id:
         raise HTTPException(status_code=403, detail="Forbidden")
@@ -1827,11 +1987,7 @@ def create_mentor_chat_session(
     sid = str(uuid4())
     now_dt = utc_now()
     new_session = MentorChatSessionTable(
-        id=sid,
-        user_id=user_id,
-        title="New Chat",
-        created_at=now_dt,
-        updated_at=now_dt
+        id=sid, user_id=user_id, title="New Chat", created_at=now_dt, updated_at=now_dt
     )
     db.add(new_session)
     db.commit()
@@ -1844,13 +2000,16 @@ def create_mentor_chat_session(
     )
 
 
-@app.patch("/api/users/{user_id}/mentor-chat/sessions/{session_id}", response_model=MentorChatSessionModel)
+@app.patch(
+    "/api/users/{user_id}/mentor-chat/sessions/{session_id}",
+    response_model=MentorChatSessionModel,
+)
 def update_mentor_chat_session(
     user_id: str,
     session_id: str,
     payload: MentorChatSessionUpdate,
     db: Session = Depends(get_db),
-    user: User = Depends(require_current_user)
+    user: User = Depends(require_current_user),
 ) -> MentorChatSessionModel:
     if user.id != user_id:
         raise HTTPException(status_code=403, detail="Forbidden")
@@ -1877,7 +2036,7 @@ def delete_mentor_chat_session(
     user_id: str,
     session_id: str,
     db: Session = Depends(get_db),
-    user: User = Depends(require_current_user)
+    user: User = Depends(require_current_user),
 ) -> dict[str, str]:
     if user.id != user_id:
         raise HTTPException(status_code=403, detail="Forbidden")
@@ -1888,7 +2047,9 @@ def delete_mentor_chat_session(
 
     # Delete messages
     db.execute(
-        delete(MentorChatHistoryTable).where(MentorChatHistoryTable.session_id == session_id)
+        delete(MentorChatHistoryTable).where(
+            MentorChatHistoryTable.session_id == session_id
+        )
     )
     db.delete(session)
     db.commit()
@@ -1896,18 +2057,24 @@ def delete_mentor_chat_session(
     return {"status": "ok"}
 
 
-@app.get("/api/users/{user_id}/mentor-chat/sessions/{session_id}/messages", response_model=list[MentorChatMessage])
+@app.get(
+    "/api/users/{user_id}/mentor-chat/sessions/{session_id}/messages",
+    response_model=list[MentorChatMessage],
+)
 def get_mentor_chat_messages(
     user_id: str,
     session_id: str,
     db: Session = Depends(get_db),
-    user: User = Depends(require_current_user)
+    user: User = Depends(require_current_user),
 ) -> list[MentorChatMessage]:
     if user.id != user_id:
         raise HTTPException(status_code=403, detail="Forbidden")
     history = db.scalars(
         select(MentorChatHistoryTable)
-        .where(MentorChatHistoryTable.user_id == user_id, MentorChatHistoryTable.session_id == session_id)
+        .where(
+            MentorChatHistoryTable.user_id == user_id,
+            MentorChatHistoryTable.session_id == session_id,
+        )
         .order_by(MentorChatHistoryTable.created_at.asc())
     ).all()
 
@@ -1916,7 +2083,7 @@ def get_mentor_chat_messages(
             id=msg.id,
             role=msg.role,
             content=msg.content,
-            created_at=msg.created_at.isoformat()
+            created_at=msg.created_at.isoformat(),
         )
         for msg in history
     ]
@@ -1928,7 +2095,7 @@ async def post_mentor_chat_message(
     session_id: str,
     payload: MentorChatRequest,
     db: Session = Depends(get_db),
-    user: User = Depends(require_current_user)
+    user: User = Depends(require_current_user),
 ) -> dict[str, str]:
     if user.id != user_id:
         raise HTTPException(status_code=403, detail="Forbidden")
@@ -1946,7 +2113,7 @@ async def post_mentor_chat_message(
         user_id=user_id,
         role="user",
         content=payload.message,
-        created_at=now_dt
+        created_at=now_dt,
     )
     db.add(user_entry)
 
@@ -1962,7 +2129,10 @@ async def post_mentor_chat_message(
     # Fetch history for context
     history = db.scalars(
         select(MentorChatHistoryTable)
-        .where(MentorChatHistoryTable.user_id == user_id, MentorChatHistoryTable.session_id == session_id)
+        .where(
+            MentorChatHistoryTable.user_id == user_id,
+            MentorChatHistoryTable.session_id == session_id,
+        )
         .order_by(MentorChatHistoryTable.created_at.asc())
     ).all()
 
@@ -2014,13 +2184,16 @@ async def post_mentor_chat_message(
 
     try:
         response_dict = await call_openrouter_json(
-            system_prompt=system_prompt,
-            user_prompt=json.dumps(messages_for_llm)
+            system_prompt=system_prompt, user_prompt=json.dumps(messages_for_llm)
         )
-        reply_content = response_dict.get("reply", "I'm sorry, I couldn't formulate a proper reply.")
+        reply_content = response_dict.get(
+            "reply", "I'm sorry, I couldn't formulate a proper reply."
+        )
     except Exception as e:
         logger.error("Error calling AI: %s", e)
-        reply_content = "Sorry, I am having trouble connecting to the AI brain right now."
+        reply_content = (
+            "Sorry, I am having trouble connecting to the AI brain right now."
+        )
 
     # Save AI message
     ai_dt = utc_now()
@@ -2031,10 +2204,109 @@ async def post_mentor_chat_message(
         user_id=user_id,
         role="assistant",
         content=reply_content,
-        created_at=ai_dt
+        created_at=ai_dt,
     )
     db.add(ai_entry)
     session.updated_at = ai_dt
     db.commit()
+
+    return {"reply": reply_content}
+
+
+class UserPreferencesUpdate(BaseModel):
+    anonymousMode: bool
+
+
+@app.patch("/api/users/{user_id}/preferences", response_model=User)
+def update_user_preferences(
+    user_id: str,
+    payload: UserPreferencesUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_current_user),
+) -> User:
+    if user.id != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    user_record = db.get(UserTable, user_id)
+    if not user_record:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user_record.anonymous_mode = payload.anonymousMode
+    db.commit()
+
+    return user_from_table(user_record)
+
+
+class AnonymousChatRequest(BaseModel):
+    messages: list[dict[str, str]]
+
+
+@app.post("/api/users/{user_id}/mentor-chat/anonymous")
+async def post_anonymous_chat(
+    user_id: str,
+    payload: AnonymousChatRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_current_user),
+) -> dict[str, str]:
+    if user.id != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Fetch user profile
+    profile_record = db.get(ProfileTable, user_id)
+    profile_info = ""
+    if profile_record:
+        p = profile_from_table(profile_record)
+        profile_info = (
+            f"User Profile Info:\n"
+            f"- Target Roles: {', '.join(p.targetRoles)}\n"
+            f"- Technical Skills: {', '.join([s.name for s in p.technicalSkills])}\n"
+            f"- Soft Skills: {', '.join(p.softSkills)}\n"
+            f"- Dream Companies: {', '.join(p.dreamCompanies)}\n"
+        )
+
+    system_prompt = (
+        "You are PrepIQ AI Mentor, a friendly and professional mentor focused on learning, academics, skill development, interview preparation, and career growth.\n\n"
+        "Primary Scope:\n"
+        "* Career guidance\n"
+        "* Study-related questions\n"
+        "* Programming and technical topics\n"
+        "* Interview preparation\n"
+        "* Skill development\n"
+        "* Resume and project guidance\n"
+        "* Learning roadmaps\n"
+        "* Academic support\n\n"
+        "Conversation Behavior:\n"
+        "* Be friendly, approachable, and conversational.\n"
+        "* Accept common greetings and social interactions such as: Hi, Hello, Hey, Good morning, Good evening, How are you?, Thank you, Bye, Good night.\n"
+        "* Respond naturally to these conversational messages before guiding the user toward productive mentoring discussions.\n"
+        "* Do not reject users simply because they start with casual conversation.\n"
+        "* Maintain a helpful and welcoming tone.\n\n"
+        "Out-of-Scope Handling:\n"
+        "* For questions unrelated to education, learning, skills, career development, or the user's profile, politely redirect the conversation.\n"
+        "* Instead of abruptly refusing, respond in a friendly manner such as: \"I'm primarily here to help with studies, career development, interview preparation, and skill building. If you'd like help with learning, projects, academics, or career growth, I'd be happy to assist.\"\n"
+        "* Allow brief casual conversation, but gradually guide the discussion back toward educational or career-focused topics.\n\n"
+        "Personalization:\n"
+        "* Use the user's profile, skills, goals, projects, and career interests whenever available.\n"
+        "* Provide practical, actionable, and personalized guidance.\n\n"
+        "Important:\n"
+        "* Be mentor-like, not a strict gatekeeper.\n"
+        "* Greetings, gratitude, and basic social interaction should always receive natural responses.\n"
+        "* Focus on being helpful while keeping the main purpose centered on learning and career growth.\n\n"
+        f"{profile_info}\n"
+        "ALWAYS return JSON with a single key 'reply' containing your answer."
+    )
+
+    try:
+        response_dict = await call_openrouter_json(
+            system_prompt=system_prompt, user_prompt=json.dumps(payload.messages)
+        )
+        reply_content = response_dict.get(
+            "reply", "I'm sorry, I couldn't formulate a proper reply."
+        )
+    except Exception as e:
+        logger.error("Error calling AI: %s", e)
+        reply_content = (
+            "Sorry, I am having trouble connecting to the AI brain right now."
+        )
 
     return {"reply": reply_content}
