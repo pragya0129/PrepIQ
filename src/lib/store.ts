@@ -7,6 +7,7 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  anonymousMode?: boolean;
 }
 
 export interface AuthSession {
@@ -244,7 +245,16 @@ export function useAuth() {
     setSession(null);
   }, []);
 
-  return { user: session?.user ?? null, login, signup, logout, hydrated };
+  const updateUser = useCallback((updatedUser: User) => {
+    setSessionState((prev) => {
+      if (!prev) return null;
+      const nextSession = { ...prev, user: updatedUser };
+      setSession(nextSession);
+      return nextSession;
+    });
+  }, []);
+
+  return { user: session?.user ?? null, login, signup, logout, hydrated, updateUser };
 }
 
 export function useCareerProfile(userId: string | undefined) {
