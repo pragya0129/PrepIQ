@@ -1202,28 +1202,43 @@ async def evaluate_mock_attempt(
 # Initialize HTTPBearer security scheme for Swagger UI
 security = HTTPBearer(
     scheme_name="Bearer",
-    description="JWT Bearer token"
+    description="JWT Bearer token",
+    auto_error=False,
 )
 
 
 def require_current_user(
     user_id: str | None = None,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: Session = Depends(get_db),
 ) -> UserTable:
+
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authorization token",
+        )
+
     token = credentials.credentials
     payload = decode_token(token)
+
     token_user_id = payload.get("sub")
+
     if user_id is not None and token_user_id != user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden",
+        )
 
     user = db.get(UserTable, token_user_id)
+
     if not user:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
         )
-    return user
 
+    return user
 
 def validate_payload_size(request: Request) -> None:
     if "content-length" in request.headers:
