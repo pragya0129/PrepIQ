@@ -63,6 +63,7 @@ export interface InterviewSession {
   mlMatchScore: number;
   isEstimated: boolean;
   createdAt: string;
+  interviewDate?: string;
 }
 
 export interface GapItem {
@@ -141,6 +142,7 @@ export interface CreateInterviewSessionInput {
   company: string;
   jdText: string;
   resumeText: string;
+  interviewDate?: string;
 }
 
 export interface CreateMockAttemptInput {
