@@ -17,7 +17,6 @@ import httpx
 from fastapi import (
     Depends,
     FastAPI,
-    Header,
     HTTPException,
     Query,
     Request,
@@ -25,6 +24,7 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import (
     JSON,
@@ -1198,26 +1198,43 @@ async def evaluate_mock_attempt(
     )
 
 
+# Initialize HTTPBearer security scheme for Swagger UI
+security = HTTPBearer(
+    scheme_name="Bearer",
+    description="JWT Bearer token",
+    auto_error=False,
+)
+
+
 def require_current_user(
     user_id: str | None = None,
-    authorization: str | None = Header(default=None),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: Session = Depends(get_db),
 ) -> UserTable:
-    if not authorization or not authorization.startswith("Bearer "):
+
+    if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing authorization token",
         )
 
-    payload = decode_token(authorization.removeprefix("Bearer ").strip())
+    token = credentials.credentials
+    payload = decode_token(token)
+
     token_user_id = payload.get("sub")
+
     if user_id is not None and token_user_id != user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden",
+        )
 
     user = db.get(UserTable, token_user_id)
+
     if not user:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
         )
     return user
 
