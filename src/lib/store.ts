@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { apiRequest, SESSION_KEY } from "@/lib/api";
+import { apiRequest, AUTH_EXPIRED_EVENT, SESSION_KEY } from "@/lib/api";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 
@@ -191,6 +191,13 @@ export function useAuth() {
       return;
     }
 
+    const handleAuthExpired = () => {
+      setSessionState(null);
+      setSession(null);
+    };
+
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+
     apiRequest<User>("/api/auth/me")
       .then((user) => {
         if (!active) return;
@@ -209,6 +216,7 @@ export function useAuth() {
 
     return () => {
       active = false;
+      window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
     };
   }, []);
 
