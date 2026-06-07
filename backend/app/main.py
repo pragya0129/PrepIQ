@@ -115,7 +115,8 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 CORS_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
-        "CORS_ORIGINS", "http://localhost:8080,http://127.0.0.1:8080"
+        "CORS_ORIGINS",
+        "http://localhost:8080,http://127.0.0.1:8080,https://prepiqfrontend.vercel.app",
     ).split(",")
     if origin.strip()
 ]
