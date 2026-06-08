@@ -133,6 +133,7 @@ export interface JobApplication {
   nextAction: string;
   nextActionDate: string;
   linkedPrepSessionId: string | null;
+  sortOrder: number;
   createdAt: string;
   updatedAt: string;
 }

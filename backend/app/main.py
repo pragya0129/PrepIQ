@@ -115,7 +115,8 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 CORS_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
-        "CORS_ORIGINS", "http://localhost:8080,http://127.0.0.1:8080"
+        "CORS_ORIGINS",
+        "http://localhost:8080,http://127.0.0.1:8080,https://prepiqfrontend.vercel.app",
     ).split(",")
     if origin.strip()
 ]
@@ -217,6 +218,7 @@ class JobApplicationTable(Base):
     linked_prep_session_id: Mapped[str | None] = mapped_column(
         String(36), nullable=True
     )
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -457,9 +459,8 @@ class MockAttempt(BaseModel):
 
 class CreateMockAttemptRequest(BaseModel):
     sessionId: str = ""
-    question: str
-    userAnswer: str
-
+    question: str = Field(max_length=2000)
+    userAnswer: str = Field(max_length=10000)
 
 class PaginatedMockAttempts(BaseModel):
     items: list[MockAttempt]
@@ -487,6 +488,7 @@ class JobApplication(BaseModel):
     nextAction: str
     nextActionDate: str
     linkedPrepSessionId: str | None
+    sortOrder: int
     createdAt: str
     updatedAt: str
 
@@ -528,6 +530,7 @@ class UpdateJobApplicationRequest(BaseModel):
     nextAction: str | None = None
     nextActionDate: str | None = None
     linkedPrepSessionId: str | None = None
+    sortOrder: int | None = None
 
 
 def user_from_table(user: UserTable) -> User:
@@ -610,6 +613,7 @@ def job_from_table(job: JobApplicationTable) -> JobApplication:
         nextAction=job.next_action,
         nextActionDate=job.next_action_date,
         linkedPrepSessionId=job.linked_prep_session_id,
+        sortOrder=job.sort_order,
         createdAt=job.created_at.isoformat(),
         updatedAt=job.updated_at.isoformat(),
     )
@@ -1279,14 +1283,13 @@ def require_current_user(
     return user
 
 
-def validate_payload_size(request: Request) -> None:
-    if "content-length" in request.headers:
-        length = int(request.headers["content-length"])
-        if length > 5242880:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail="Request entity too large",
-            )
+async def validate_payload_size(request: Request) -> None:
+    body = await request.body()
+    if len(body) > 5242880:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Request entity too large",
+        )
 
 
 app = FastAPI(title="PrepIQ Backend", version="2.0.0")
@@ -1335,6 +1338,7 @@ async def startup() -> None:
                     text(
                         "ALTER TABLE interview_sessions "
                         "ADD COLUMN interview_date VARCHAR(32)"
+                        "ALTER TABLE job_applications ADD COLUMN sort_order INTEGER DEFAULT 0"
                     )
                 )
             except Exception:
@@ -1699,6 +1703,7 @@ def get_mock_attempts(
     "/api/users/{user_id}/mocks",
     response_model=MockAttempt,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(validate_payload_size)],
 )
 async def create_mock_attempt(
     user_id: str,
@@ -1746,7 +1751,7 @@ def get_jobs(
     rows = db.execute(
         select(JobApplicationTable)
         .where(JobApplicationTable.user_id == user_id)
-        .order_by(JobApplicationTable.created_at.asc())
+        .order_by(JobApplicationTable.sort_order.asc(), JobApplicationTable.created_at.asc())
     ).scalars()
     return [job_from_table(row) for row in rows]
 
@@ -1763,6 +1768,11 @@ def create_job(
     db: Session = Depends(get_db),
 ) -> JobApplication:
     now = utc_now()
+    max_sort = db.execute(
+        select(func.max(JobApplicationTable.sort_order))
+        .where(JobApplicationTable.user_id == user_id)
+        .where(JobApplicationTable.status == payload.status)
+    ).scalar()
     row = JobApplicationTable(
         id=str(uuid4()),
         user_id=user_id,
@@ -1779,6 +1789,7 @@ def create_job(
         next_action="",
         next_action_date="",
         linked_prep_session_id=None,
+        sort_order=(max_sort or 0) + 1,
         created_at=now,
         updated_at=now,
     )
@@ -1819,6 +1830,7 @@ def update_job(
         "nextAction": "next_action",
         "nextActionDate": "next_action_date",
         "linkedPrepSessionId": "linked_prep_session_id",
+        "sortOrder": "sort_order",
     }
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(job, field_map[key], value)
@@ -1881,6 +1893,7 @@ class GenerateQuestionResponse(BaseModel):
 @app.post(
     "/api/users/{user_id}/mock/generate-question",
     response_model=GenerateQuestionResponse,
+    dependencies=[Depends(validate_payload_size)],
 )
 async def generate_mock_question(
     user_id: str,
@@ -2047,7 +2060,7 @@ class MentorChatMessage(BaseModel):
 
 
 class MentorChatRequest(BaseModel):
-    message: str
+    message: str = Field(max_length=4000)
 
 
 @app.get(
@@ -2194,7 +2207,10 @@ def get_mentor_chat_messages(
     ]
 
 
-@app.post("/api/users/{user_id}/mentor-chat/sessions/{session_id}/messages")
+@app.post(
+    "/api/users/{user_id}/mentor-chat/sessions/{session_id}/messages",
+    dependencies=[Depends(validate_payload_size)],
+)
 async def post_mentor_chat_message(
     user_id: str,
     session_id: str,
@@ -2343,7 +2359,10 @@ class AnonymousChatRequest(BaseModel):
     messages: list[dict[str, str]]
 
 
-@app.post("/api/users/{user_id}/mentor-chat/anonymous")
+@app.post(
+    "/api/users/{user_id}/mentor-chat/anonymous",
+    dependencies=[Depends(validate_payload_size)],
+)
 async def post_anonymous_chat(
     user_id: str,
     payload: AnonymousChatRequest,
